@@ -1,0 +1,124 @@
+import asyncio
+import sys
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+from aiogram import Bot, Dispatcher
+
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
+
+from config import BOT_TOKEN, ADMIN_IDS, DEFAULT_WORKING_DIR
+from middlewares.auth import AuthMiddleware
+from handlers import start, files, terminal, system, ai_agent, cleaner
+from utils.logger import logger
+from utils.helpers import escape_html
+
+
+BANNER = """
+================================================================
+  _______   _                               _____             
+ |__   __| | |                             |  __ \            
+    | | ___| | ___  __ _ _ __ __ _ _ __ ___ | |  | | _____   __
+    | |/ _ \ |/ _ \/ _` | '__/ _` | '_ ` _ \| |  | |/ _ \ \ / /
+    | |  __/ |  __/ (_| | | | (_| | | | | | | |__| |  __/\ V / 
+    |_|\___|_|\___|\__, |_|  \__,_|_| |_| |_|_____/ \___| \_/  
+                    __/ |   B R I D G E  &  A I  A G E N T     
+                   |___/                                        
+================================================================
+"""
+
+
+async def setup_bot_commands(bot: Bot):
+    """Telegram ilovasida menyu buyruqlarini ro'yxatdan o'tkazish."""
+    commands = [
+        BotCommand(command="start", description="🚀 Bosh menyuni ochish"),
+        BotCommand(command="files", description="📁 Fayllar brauzeri"),
+        BotCommand(command="sh", description="💻 Terminal buyrug'ini bajarish"),
+        BotCommand(command="agent", description="🤖 Avtonom AI dasturchi"),
+        BotCommand(command="fix", description="🔧 Koddagi xatolikni tuzatish"),
+        BotCommand(command="explain", description="📖 Kodni tahlil qilish"),
+        BotCommand(command="status", description="📊 Tizim holati (CPU, RAM, Disk)"),
+        BotCommand(command="screenshot", description="📸 Kompyuter ekrani skrinshoti"),
+        BotCommand(command="cleaner", description="🧹 Telegram hisobni tozalash"),
+        BotCommand(command="help", description="📖 To'liq qo'llanma"),
+    ]
+    await bot.set_my_commands(commands)
+
+
+async def notify_admins_on_startup(bot: Bot):
+    """Bot ishga tushganda adminlarga xabar yuborish."""
+    if not ADMIN_IDS:
+        logger.warning(
+            "DIQQAT: .env faylida ADMIN_IDS ko'rsatilmagan! Bot faqat adminlar uchun ishlaydi."
+        )
+        return
+
+    text = (
+        "🟢 <b>Telegram Dev Bridge ishga tushdi!</b>\n\n"
+        f"📍 <b>Boshlang'ich katalog:</b> <code>{escape_html(str(DEFAULT_WORKING_DIR))}</code>\n"
+        "⚡ Kompyuteringiz boshqaruvga tayyor. Menyuni ko'rish uchun /start bosing."
+    )
+
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, text, parse_mode="HTML")
+        except Exception as e:
+            logger.warning(f"Admin ({admin_id}) ga bildirishnoma yuborilmadi: {e}")
+
+
+async def main():
+    print(BANNER)
+
+    if not BOT_TOKEN or BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
+        logger.error(
+            "XATOLIK: BOT_TOKEN topilmadi! Iltimos, .env faylini oching va @BotFather dan olingan bot tokenni kiriting."
+        )
+        sys.exit(1)
+
+    # Bot va Dispatcher yaratish
+    bot = Bot(token=BOT_TOKEN)
+    dp = Dispatcher(storage=MemoryStorage())
+
+    # Xavfsizlik Middleware sini o'rnatish
+    auth_middleware = AuthMiddleware()
+    dp.message.middleware(auth_middleware)
+    dp.callback_query.middleware(auth_middleware)
+
+    # Handler routerlarini ulash
+    dp.include_router(start.router)
+    dp.include_router(files.router)
+    dp.include_router(terminal.router)
+    dp.include_router(system.router)
+    dp.include_router(ai_agent.router)
+    dp.include_router(cleaner.router)
+
+
+    # Buyruqlar menyusi va xabarnoma
+    await setup_bot_commands(bot)
+    await notify_admins_on_startup(bot)
+
+    bot_info = await bot.get_me()
+    logger.info(f"Bot muvaffaqiyatli ishga tushdi: @{bot_info.username} ({bot_info.first_name})")
+    logger.info(f"Ruxsat berilgan Admin ID lar: {list(ADMIN_IDS)}")
+    logger.info(f"Boshlang'ich papka: {DEFAULT_WORKING_DIR}")
+    logger.info("Bot Telegram xabarlarini tinglamoqda...")
+
+    try:
+        # Polling rejimida xabarlarni tinglash
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        await bot.session.close()
+        logger.info("Bot to'xtatildi.")
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Dastur to'xtatildi.")
