@@ -26,8 +26,9 @@ class CleanerStates(StatesGroup):
 async def cmd_cleaner_menu(message: Message, state: FSMContext):
     """Telegram hisobini tozalash asosiy menyusi."""
     await state.clear()
+    user_id = message.from_user.id
     is_conf = AccountCleanerService.is_configured()
-    is_auth = await AccountCleanerService.is_authorized() if is_conf else False
+    is_auth = await AccountCleanerService.is_authorized(user_id) if is_conf else False
 
     if not is_conf:
         text = (
@@ -95,10 +96,11 @@ async def cb_start_login(callback: CallbackQuery, state: FSMContext):
 @router.message(CleanerStates.waiting_for_phone)
 async def handle_phone_input(message: Message, state: FSMContext):
     phone = message.text.strip().replace(" ", "")
+    user_id = message.from_user.id
     status_msg = await message.answer("⏳ Tasdiqlash kodi yuborilmoqda...")
 
     try:
-        await AccountCleanerService.send_auth_code(phone)
+        await AccountCleanerService.send_auth_code(user_id, phone)
         await state.update_data(phone=phone)
         await state.set_state(CleanerStates.waiting_for_code)
         await status_msg.edit_text(
@@ -113,13 +115,14 @@ async def handle_phone_input(message: Message, state: FSMContext):
 @router.message(CleanerStates.waiting_for_code)
 async def handle_code_input(message: Message, state: FSMContext):
     code = message.text.strip().replace(" ", "")
+    user_id = message.from_user.id
     data = await state.get_data()
     phone = data.get("phone")
 
     status_msg = await message.answer("⏳ Kirish tekshirilmoqda...")
 
     try:
-        ok, res = await AccountCleanerService.complete_sign_in(phone, code)
+        ok, res = await AccountCleanerService.complete_sign_in(user_id, phone, code)
         if not ok and res == "2FA_REQUIRED":
             await state.update_data(code=code)
             await state.set_state(CleanerStates.waiting_for_2fa)
@@ -144,6 +147,7 @@ async def handle_code_input(message: Message, state: FSMContext):
 @router.message(CleanerStates.waiting_for_2fa)
 async def handle_2fa_input(message: Message, state: FSMContext):
     password = message.text.strip()
+    user_id = message.from_user.id
     data = await state.get_data()
     phone = data.get("phone")
     code = data.get("code")
@@ -151,7 +155,7 @@ async def handle_2fa_input(message: Message, state: FSMContext):
 
     status_msg = await message.answer("⏳ 2FA parol tekshirilmoqda...")
     try:
-        ok, res = await AccountCleanerService.complete_sign_in(phone, code, password=password)
+        ok, res = await AccountCleanerService.complete_sign_in(user_id, phone, code, password=password)
         if ok:
             await status_msg.edit_text(
                 f"{res}\n\nEndi hisobingizni tozalashingiz mumkin:",
@@ -171,10 +175,11 @@ async def handle_2fa_input(message: Message, state: FSMContext):
 @router.message(Command("clean_deleted"))
 async def scan_deleted_accounts_flow(event: Message | CallbackQuery):
     target = event if isinstance(event, Message) else event.message
+    user_id = event.from_user.id
     status_msg = await target.answer("🔍 Chatlar tekshirilmoqda ('Deleted Account' hisoblar qidirilmoqda)...")
 
     try:
-        deleted = await AccountCleanerService.scan_deleted_accounts()
+        deleted = await AccountCleanerService.scan_deleted_accounts(user_id)
         if not deleted:
             await status_msg.edit_text("✅ <b>Ajoyib!</b> Sizda birorta ham 'Deleted Account' chat topilmadi.", parse_mode="HTML")
             return
@@ -191,11 +196,12 @@ async def scan_deleted_accounts_flow(event: Message | CallbackQuery):
 
 @router.callback_query(F.data == "cl_do_deleted")
 async def do_delete_deleted_accounts(callback: CallbackQuery):
+    user_id = callback.from_user.id
     await callback.answer("Tozalanmoqda...")
     status_msg = await callback.message.edit_text("⏳ 'Deleted Account' chatlar o'chirilmoqda, kuting...")
 
     try:
-        count = await AccountCleanerService.remove_deleted_accounts()
+        count = await AccountCleanerService.remove_deleted_accounts(user_id)
         await status_msg.edit_text(
             f"🎉 <b>Tozalash yakunlandi!</b>\n\n"
             f"Jami <b>{count}</b> ta 'Deleted Account' chatlari muvaffaqiyatli o'chirildi.",
@@ -214,16 +220,17 @@ async def do_delete_deleted_accounts(callback: CallbackQuery):
 @router.message(Command("clean_channels"))
 async def scan_inactive_channels_flow(event: Message | CallbackQuery):
     target = event if isinstance(event, Message) else event.message
+    user_id = event.from_user.id
     status_msg = await target.answer("🔍 Kanallar va guruhlar tekshirilmoqda (60 kundan ortiq nofaol)...")
 
     try:
-        channels = await AccountCleanerService.scan_inactive_channels(days=60)
+        channels = await AccountCleanerService.scan_inactive_channels(user_id, days=60)
         if not channels:
             await status_msg.edit_text("✅ <b>Sizda nofaol kanallar topilmadi!</b>", parse_mode="HTML")
             return
 
-        user_id = target.chat.id
-        _SCANNED_CHANNELS[user_id] = [c["id"] for c in channels]
+        chat_id = target.chat.id
+        _SCANNED_CHANNELS[chat_id] = [c["id"] for c in channels]
 
         list_preview = ""
         for c in channels[:10]:
@@ -245,8 +252,9 @@ async def scan_inactive_channels_flow(event: Message | CallbackQuery):
 
 @router.callback_query(F.data == "cl_do_channels")
 async def do_leave_inactive_channels(callback: CallbackQuery):
-    user_id = callback.message.chat.id
-    ch_ids = _SCANNED_CHANNELS.get(user_id, [])
+    user_id = callback.from_user.id
+    chat_id = callback.message.chat.id
+    ch_ids = _SCANNED_CHANNELS.get(chat_id, [])
 
     if not ch_ids:
         await callback.answer("Nofaol kanallar ro'yxati topilmadi, qaytadan skaner qiling.", show_alert=True)
@@ -256,8 +264,8 @@ async def do_leave_inactive_channels(callback: CallbackQuery):
     status_msg = await callback.message.edit_text(f"⏳ {len(ch_ids)} ta kanaldan chiqilmoqda, biroz kuting...")
 
     try:
-        count = await AccountCleanerService.leave_inactive_channels(ch_ids)
-        _SCANNED_CHANNELS.pop(user_id, None)
+        count = await AccountCleanerService.leave_inactive_channels(user_id, ch_ids)
+        _SCANNED_CHANNELS.pop(chat_id, None)
         await status_msg.edit_text(
             f"🎉 <b>Muvaffaqiyatli!</b>\n\n"
             f"Jami <b>{count}</b> ta faol bo'lmagan kanal va guruhlardan chiqib ketildi.",
@@ -276,16 +284,17 @@ async def do_leave_inactive_channels(callback: CallbackQuery):
 @router.message(Command("clean_old"))
 async def scan_old_dialogs_flow(event: Message | CallbackQuery):
     target = event if isinstance(event, Message) else event.message
+    user_id = event.from_user.id
     status_msg = await target.answer("🔍 Eski yozishmalar qidirilmoqda (90 kundan ortiq xabar yozilmagan)...")
 
     try:
-        old_dialogs = await AccountCleanerService.scan_old_dialogs(days=90)
+        old_dialogs = await AccountCleanerService.scan_old_dialogs(user_id, days=90)
         if not old_dialogs:
             await status_msg.edit_text("✅ <b>90 kundan eski bo'lgan keraksiz dialoglar topilmadi.</b>", parse_mode="HTML")
             return
 
-        user_id = target.chat.id
-        _SCANNED_OLD_DIALOGS[user_id] = [d["id"] for d in old_dialogs]
+        chat_id = target.chat.id
+        _SCANNED_OLD_DIALOGS[chat_id] = [d["id"] for d in old_dialogs]
 
         list_preview = ""
         for d in old_dialogs[:10]:
@@ -307,8 +316,9 @@ async def scan_old_dialogs_flow(event: Message | CallbackQuery):
 
 @router.callback_query(F.data == "cl_do_old")
 async def do_delete_old_dialogs(callback: CallbackQuery):
-    user_id = callback.message.chat.id
-    d_ids = _SCANNED_OLD_DIALOGS.get(user_id, [])
+    user_id = callback.from_user.id
+    chat_id = callback.message.chat.id
+    d_ids = _SCANNED_OLD_DIALOGS.get(chat_id, [])
 
     if not d_ids:
         await callback.answer("Dialoglar ro'yxati topilmadi, qaytadan skaner qiling.", show_alert=True)
@@ -318,8 +328,8 @@ async def do_delete_old_dialogs(callback: CallbackQuery):
     status_msg = await callback.message.edit_text(f"⏳ {len(d_ids)} ta eski dialog o'chirilmoqda...")
 
     try:
-        count = await AccountCleanerService.delete_old_dialogs(d_ids)
-        _SCANNED_OLD_DIALOGS.pop(user_id, None)
+        count = await AccountCleanerService.delete_old_dialogs(user_id, d_ids)
+        _SCANNED_OLD_DIALOGS.pop(chat_id, None)
         await status_msg.edit_text(
             f"🎉 <b>Muvaffaqiyatli tozalandi!</b>\n\n"
             f"Jami <b>{count}</b> ta eski dialog o'chirildi.",
@@ -332,12 +342,15 @@ async def do_delete_old_dialogs(callback: CallbackQuery):
 
 @router.callback_query(F.data == "cl_cancel")
 async def cb_cancel_cleaner(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    is_auth = await AccountCleanerService.is_authorized(user_id)
     await callback.answer("Amal bekor qilindi")
-    await callback.message.edit_text("❌ Tozalash bekor qilindi.", reply_markup=cleaner_main_keyboard(is_auth=True))
+    await callback.message.edit_text("❌ Tozalash bekor qilindi.", reply_markup=cleaner_main_keyboard(is_auth=is_auth))
 
 
 @router.callback_query(F.data == "cl_refresh")
 async def cb_refresh_cleaner(callback: CallbackQuery):
+    user_id = callback.from_user.id
     await callback.answer("Yangilandi")
-    is_auth = await AccountCleanerService.is_authorized()
+    is_auth = await AccountCleanerService.is_authorized(user_id)
     await callback.message.edit_reply_markup(reply_markup=cleaner_main_keyboard(is_auth=is_auth))

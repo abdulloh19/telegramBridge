@@ -32,12 +32,16 @@ if admin_ids_raw:
         if raw_id.isdigit():
             ADMIN_IDS.add(int(raw_id))
 
+# Bot hamma uchun ochiq bo'lishi (Public Mode)
+ALLOW_ALL_USERS = os.getenv("ALLOW_ALL_USERS", "true").lower() in ("true", "1", "yes")
+
 # Boshlang'ich ishchi papka
 raw_work_dir = os.getenv("DEFAULT_WORKING_DIR", "").strip()
 if raw_work_dir and Path(raw_work_dir).exists():
     DEFAULT_WORKING_DIR = Path(raw_work_dir).resolve()
 else:
     DEFAULT_WORKING_DIR = BASE_DIR.resolve()
+
 
 # AI Sozlamalari
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
@@ -71,8 +75,17 @@ def set_user_cwd(user_id: int, path: Path | str) -> Path:
 
 
 def is_admin(user_id: int) -> bool:
-    """Foydalanuvchi adminlar ro'yxatida borligini tekshiradi."""
-    # Agar ADMIN_IDS belgilanmagan bo'lsa, xavfsizlik uchun hech kimga ruxsat berilmaydi
+    """Foydalanuvchiga botdan foydalanish ruxsati borligini tekshiradi."""
+    if ALLOW_ALL_USERS:
+        return True
     if not ADMIN_IDS:
         return False
     return user_id in ADMIN_IDS
+
+
+def is_super_admin(user_id: int) -> bool:
+    """Foydalanuvchi asosiy admin ekanligini tekshiradi."""
+    if not ADMIN_IDS:
+        return ALLOW_ALL_USERS
+    return user_id in ADMIN_IDS
+
