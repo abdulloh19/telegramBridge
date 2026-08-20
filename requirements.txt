@@ -7,4 +7,6 @@ mss>=9.0.1
 google-genai>=0.1.1
 colorama>=0.4.6
 telethon>=1.36.0
+aiohttp-socks>=0.8.4
+
 
