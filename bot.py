@@ -81,9 +81,29 @@ async def main():
         )
         sys.exit(1)
 
+    # PythonAnywhere va boshqa serverlar uchun proksi tekshiruvi
+    import os
+    from aiogram.client.session.aiohttp import AiohttpSession
+
+    proxy_url = os.getenv("HTTP_PROXY") or os.getenv("http_proxy") or os.getenv("HTTPS_PROXY")
+    # Agar PythonAnywhere serverida bo'lsa
+    if not proxy_url:
+        is_pa = any([
+            "PYTHONANYWHERE_DOMAIN" in os.environ,
+            "PYTHONANYWHERE_SITE" in os.environ,
+            os.path.exists("/var/log/pythonanywhere"),
+            "pythonanywhere" in os.environ.get("HOME", "").lower() or "zubayr" in os.environ.get("HOME", "").lower()
+        ])
+        if is_pa:
+            proxy_url = "http://proxy.server:3128"
+            logger.info("PythonAnywhere muhiti aniqlandi, proksi sozlandi: http://proxy.server:3128")
+
+    session = AiohttpSession(proxy=proxy_url) if proxy_url else None
+
     # Bot va Dispatcher yaratish
-    bot = Bot(token=BOT_TOKEN)
+    bot = Bot(token=BOT_TOKEN, session=session)
     dp = Dispatcher(storage=MemoryStorage())
+
 
     # Xavfsizlik Middleware sini o'rnatish
     auth_middleware = AuthMiddleware()
