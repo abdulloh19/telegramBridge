@@ -23,31 +23,19 @@ class DownloaderStates(StatesGroup):
 @router.message(Command("download_media"), StateFilter("*"))
 @router.message(F.text == "📥 Video Yuklash", StateFilter("*"))
 async def cmd_download_media(message: Message, state: FSMContext, bot: Bot):
-    """Yopiq yoki ochiq Telegram kanallardan video yuklab olish."""
+    """Yopiq yoki ochiq Telegram kanallardan video yuklab olish menyusi."""
     await state.clear()
-    user_id = message.from_user.id
-
-    # 1. Avtorizatsiya tekshiruvi
-    if not await AccountCleanerService.is_authorized(user_id):
-        await message.answer(
-            "🔒 <b>Yopiq (Private) kanallardan video yuklash uchun:</b>\n\n"
-            "Avval shaxsiy Telegram hisobingizni botga ulashingiz kerak (chunki yopiq kanalga faqat sizning akkauntingiz a'zo).\n\n"
-            "<i>Iltimos, quyidagi usullardan birini tanlab kiring:</i>",
-            parse_mode="HTML",
-            reply_markup=cleaner_login_methods_keyboard()
-        )
-        return
-
-    # 2. Agar buyruq bilan birga link yuborilgan bo'lsa: /dl https://t.me/c/...
     args = message.text.split(maxsplit=1)
+
+    # 1. Agar buyruq bilan birga link yuborilgan bo'lsa: /dl https://t.me/c/...
     if len(args) > 1 and "t.me/" in args[1]:
         await _process_media_download(message, args[1].strip(), bot)
         return
 
-    # 3. Aks holda havola so'rash
+    # 2. Havola so'rash
     await state.set_state(DownloaderStates.waiting_for_media_link)
     await message.answer(
-        "📥 <b>Telegram Private/Public Video Yuklovchi</b>\n\n"
+        "📥 <b>Telegram Private & Public Video Yuklovchi</b>\n\n"
         "Yopiq (Private) yoki ochiq kanaldagi video xabar havolasini (link) yuboring:\n\n"
         "<b>Misollar:</b>\n"
         "• Bitta video: <code>https://t.me/c/1234567890/45</code>\n"
@@ -80,6 +68,12 @@ async def handle_media_link_input(message: Message, state: FSMContext, bot: Bot)
 
     await state.clear()
     await _process_media_download(message, link, bot)
+
+
+@router.message(F.text.regexp(r'https?://t\.me/(c/\d+|[a-zA-Z0-9_]+)/\d+'), StateFilter(None))
+async def handle_direct_telegram_link(message: Message, state: FSMContext, bot: Bot):
+    """Foydalanuvchi to'g'ridan-to'g'ri link tashlaganida ham avtomatik yuklash."""
+    await _process_media_download(message, message.text.strip(), bot)
 
 
 async def _process_media_download(message: Message, link: str, bot: Bot):

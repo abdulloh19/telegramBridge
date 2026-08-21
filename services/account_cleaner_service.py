@@ -125,14 +125,23 @@ class AccountCleanerService:
 
     @staticmethod
     async def is_authorized(user_id: int) -> bool:
-        """Foydalanuvchi akkauntiga allaqachon kirilganmi tekshiradi."""
+        """Foydalanuvchi akkauntiga allaqachon kirilganmi tekshiradi (hech qachon osilib qolmaydi)."""
+        import config
         if not AccountCleanerService.is_configured():
             return False
+
+        session_file = SESSIONS_DIR / f"user_session_{user_id}.session"
+        if not session_file.exists():
+            return False
+
         try:
-            client = await AccountCleanerService.get_client(user_id)
-            return await client.is_user_authorized()
+            async def _check():
+                client = await AccountCleanerService.get_client(user_id)
+                return await client.is_user_authorized()
+
+            return await asyncio.wait_for(_check(), timeout=3.0)
         except Exception as e:
-            logger.warning(f"Avtorizatsiyani tekshirishda xatolik ({user_id}): {e}")
+            logger.warning(f"Avtorizatsiyani tekshirishda xatolik/timeout ({user_id}): {e}")
             return False
 
     @staticmethod
