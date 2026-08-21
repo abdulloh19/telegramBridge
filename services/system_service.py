@@ -17,50 +17,87 @@ class SystemService:
     def get_system_summary() -> dict:
         """Tizim resurslari (CPU, RAM, Disk, Uptime) haqida to'liq ma'lumot beradi."""
         # 1. CPU
-        cpu_percent = psutil.cpu_percent(interval=0.5)
-        cpu_count_logical = psutil.cpu_count(logical=True)
-        cpu_count_physical = psutil.cpu_count(logical=False) or cpu_count_logical
-        cpu_freq = psutil.cpu_freq()
-        cpu_freq_str = f"{round(cpu_freq.current / 1000, 2)} GHz" if cpu_freq else "N/A"
+        try:
+            cpu_percent = psutil.cpu_percent(interval=0.3)
+        except Exception:
+            cpu_percent = 0.0
+
+        try:
+            cpu_count_logical = psutil.cpu_count(logical=True) or 1
+            cpu_count_physical = psutil.cpu_count(logical=False) or cpu_count_logical
+        except Exception:
+            cpu_count_logical = 1
+            cpu_count_physical = 1
+
+        try:
+            cpu_freq = psutil.cpu_freq()
+            cpu_freq_str = f"{round(cpu_freq.current / 1000, 2)} GHz" if cpu_freq and cpu_freq.current else "N/A"
+        except Exception:
+            cpu_freq_str = "N/A"
 
         # 2. RAM
-        ram = psutil.virtual_memory()
-        swap = psutil.swap_memory()
+        try:
+            ram = psutil.virtual_memory()
+            ram_total = format_bytes(ram.total)
+            ram_used = format_bytes(ram.used)
+            ram_free = format_bytes(ram.available)
+            ram_percent = ram.percent
+        except Exception:
+            ram_total, ram_used, ram_free, ram_percent = "N/A", "N/A", "N/A", 0.0
+
+        try:
+            swap = psutil.swap_memory()
+            swap_total = format_bytes(swap.total)
+            swap_used = format_bytes(swap.used)
+            swap_percent = swap.percent
+        except Exception:
+            swap_total, swap_used, swap_percent = "N/A", "N/A", 0.0
 
         # 3. Disklar
         disks = []
-        for part in psutil.disk_partitions(all=False):
-            if os.name == 'nt' and 'cdrom' in part.opts or part.fstype == '':
-                continue
-            try:
-                usage = psutil.disk_usage(part.mountpoint)
-                disks.append({
-                    "device": part.device,
-                    "mountpoint": part.mountpoint,
-                    "total": format_bytes(usage.total),
-                    "used": format_bytes(usage.used),
-                    "free": format_bytes(usage.free),
-                    "percent": usage.percent,
-                })
-            except (PermissionError, OSError):
-                continue
+        try:
+            for part in psutil.disk_partitions(all=False):
+                if os.name == 'nt' and ('cdrom' in part.opts or part.fstype == ''):
+                    continue
+                try:
+                    usage = psutil.disk_usage(part.mountpoint)
+                    disks.append({
+                        "device": part.device,
+                        "mountpoint": part.mountpoint,
+                        "total": format_bytes(usage.total),
+                        "used": format_bytes(usage.used),
+                        "free": format_bytes(usage.free),
+                        "percent": usage.percent,
+                    })
+                except (PermissionError, OSError, Exception):
+                    continue
+        except Exception:
+            pass
 
-        # 4. Batareya (noutbuklar uchun)
-        battery = psutil.sensors_battery()
+        # 4. Batareya (noutbuklar uchun, Linux/PythonAnywhere serverlarida xato bermasligi uchun xavfsiz)
         battery_info = None
-        if battery:
-            battery_info = {
-                "percent": round(battery.percent, 1),
-                "power_plugged": battery.power_plugged,
-            }
+        try:
+            battery = psutil.sensors_battery()
+            if battery:
+                battery_info = {
+                    "percent": round(battery.percent, 1),
+                    "power_plugged": battery.power_plugged,
+                }
+        except Exception:
+            battery_info = None
 
         # 5. Uptime
-        boot_time = datetime.fromtimestamp(psutil.boot_time())
-        uptime_delta = datetime.now() - boot_time
-        days = uptime_delta.days
-        hours, remainder = divmod(uptime_delta.seconds, 3600)
-        minutes, _ = divmod(remainder, 60)
-        uptime_str = f"{days} kun {hours} soat {minutes} daqiqa" if days > 0 else f"{hours} soat {minutes} daqiqa"
+        try:
+            boot_time = datetime.fromtimestamp(psutil.boot_time())
+            uptime_delta = datetime.now() - boot_time
+            days = uptime_delta.days
+            hours, remainder = divmod(uptime_delta.seconds, 3600)
+            minutes, _ = divmod(remainder, 60)
+            uptime_str = f"{days} kun {hours} soat {minutes} daqiqa" if days > 0 else f"{hours} soat {minutes} daqiqa"
+            boot_time_str = boot_time.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            uptime_str = "N/A"
+            boot_time_str = "N/A"
 
         return {
             "os_name": f"{platform.system()} {platform.release()}",
@@ -70,17 +107,17 @@ class SystemService:
             "cpu_percent": cpu_percent,
             "cpu_cores": f"{cpu_count_physical} fizik / {cpu_count_logical} mantiqiy",
             "cpu_freq": cpu_freq_str,
-            "ram_total": format_bytes(ram.total),
-            "ram_used": format_bytes(ram.used),
-            "ram_free": format_bytes(ram.available),
-            "ram_percent": ram.percent,
-            "swap_total": format_bytes(swap.total),
-            "swap_used": format_bytes(swap.used),
-            "swap_percent": swap.percent,
+            "ram_total": ram_total,
+            "ram_used": ram_used,
+            "ram_free": ram_free,
+            "ram_percent": ram_percent,
+            "swap_total": swap_total,
+            "swap_used": swap_used,
+            "swap_percent": swap_percent,
             "disks": disks,
             "battery": battery_info,
             "uptime": uptime_str,
-            "boot_time": boot_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "boot_time": boot_time_str,
         }
 
     @staticmethod
