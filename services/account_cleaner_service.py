@@ -63,6 +63,19 @@ def get_telethon_proxy() -> Optional[dict]:
         return None
 
 
+def format_seconds(seconds: int) -> str:
+    """Saniyalarni chiroyli o'zbekcha vaqt formatiga o'tkazadi."""
+    if seconds < 60:
+        return f"{seconds} soniya"
+    minutes = seconds // 60
+    rem_sec = seconds % 60
+    if minutes < 60:
+        return f"{minutes} daqiqa {rem_sec} soniya" if rem_sec else f"{minutes} daqiqa"
+    hours = minutes // 60
+    rem_min = minutes % 60
+    return f"{hours} soat {rem_min} daqiqa"
+
+
 class AccountCleanerService:
     """Ko'p foydalanuvchili Telegram hisobini tozalash xizmati."""
 
@@ -153,6 +166,12 @@ class AccountCleanerService:
     @staticmethod
     async def send_auth_code(user_id: int, phone: str) -> str:
         """Telefon raqamga Telegram tasdiqlash kodini yuboradi."""
+        from telethon.errors import (
+            FloodWaitError,
+            PhoneNumberInvalidError,
+            PhoneNumberBannedError,
+        )
+
         client = await AccountCleanerService.get_client(user_id)
         if not client.is_connected():
             await client.connect()
@@ -161,12 +180,26 @@ class AccountCleanerService:
             result = await client.send_code_request(phone)
             AccountCleanerService._phone_hashes[user_id] = result.phone_code_hash
             return result.phone_code_hash
+        except FloodWaitError as e:
+            time_str = format_seconds(e.seconds)
+            raise RuntimeError(
+                f"Telegram cheklovi (FloodWait)! Juda ko'p kod so'ralgani uchun Telegram vaqtincha blokladi. "
+                f"Iltimos, {time_str} kuting va so'ng qayta urinib ko'ring."
+            )
+        except PhoneNumberInvalidError:
+            raise ValueError("Telefon raqam noto'g'ri kiritildi! Masalan: +998901234567")
+        except PhoneNumberBannedError:
+            raise PermissionError("Ushbu telefon raqam Telegram tomonidan bloklangan!")
         except ConnectionError as e:
             logger.warning(f"Telegram bilan ulanishda xato, qayta ulanmoqda: {e}")
             await client.connect()
-            result = await client.send_code_request(phone)
-            AccountCleanerService._phone_hashes[user_id] = result.phone_code_hash
-            return result.phone_code_hash
+            try:
+                result = await client.send_code_request(phone)
+                AccountCleanerService._phone_hashes[user_id] = result.phone_code_hash
+                return result.phone_code_hash
+            except FloodWaitError as fe:
+                time_str = format_seconds(fe.seconds)
+                raise RuntimeError(f"Telegram cheklovi (FloodWait)! Iltimos, {time_str} kuting.")
 
     @staticmethod
     async def complete_sign_in(user_id: int, phone: str, code: str, password: Optional[str] = None) -> tuple[bool, str]:
@@ -179,7 +212,8 @@ class AccountCleanerService:
             SessionPasswordNeededError,
             PhoneCodeInvalidError,
             PhoneCodeExpiredError,
-            PasswordHashInvalidError
+            PasswordHashInvalidError,
+            FloodWaitError,
         )
 
         try:
@@ -193,6 +227,9 @@ class AccountCleanerService:
                     return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
                 except PasswordHashInvalidError:
                     return False, "❌ 2FA paroli noto'g'ri kiritildi!"
+                except FloodWaitError as fe:
+                    time_str = format_seconds(fe.seconds)
+                    return False, f"⏳ Telegram cheklovi (FloodWait): Iltimos, {time_str} kuting."
                 except Exception as err:
                     return False, f"2FA bilan kirishda xatolik: {str(err)}"
 
@@ -210,6 +247,9 @@ class AccountCleanerService:
             return False, "❌ Tasdiqlash kodi noto'g'ri kiritildi!"
         except PhoneCodeExpiredError:
             return False, "❌ Tasdiqlash kodi muddati o'tgan! Iltimos, qaytadan kod so'rang."
+        except FloodWaitError as fe:
+            time_str = format_seconds(fe.seconds)
+            return False, f"⏳ Telegram cheklovi (FloodWait): Iltimos, {time_str} kuting."
         except Exception as e:
             return False, f"Kirishda xatolik: {str(e)}"
 
@@ -243,6 +283,8 @@ class AccountCleanerService:
     @staticmethod
     async def remove_deleted_accounts(user_id: int) -> int:
         """Barcha 'Deleted Account' bo'lib qolgan chatlarni o'chiradi."""
+        from telethon.errors import FloodWaitError
+
         client = await AccountCleanerService.get_client(user_id)
         deleted_list = await AccountCleanerService.scan_deleted_accounts(user_id)
         count = 0
@@ -252,6 +294,17 @@ class AccountCleanerService:
                 await client.delete_dialog(item["id"], revoke=False)
                 count += 1
                 await asyncio.sleep(0.3)  # Telegram Flood limitidan saqlanish
+            except FloodWaitError as fe:
+                if fe.seconds <= 15:
+                    await asyncio.sleep(fe.seconds + 1)
+                    try:
+                        await client.delete_dialog(item["id"], revoke=False)
+                        count += 1
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(f"Katta FloodWait ({fe.seconds}s), to'xtatildi")
+                    break
             except Exception as e:
                 logger.warning(f"Chatni o'chirishda xatolik ({item['id']}): {e}")
 
@@ -288,6 +341,8 @@ class AccountCleanerService:
     @staticmethod
     async def leave_inactive_channels(user_id: int, channel_ids: list[int]) -> int:
         """Ko'rsatilgan faol bo'lmagan kanallar va guruhlardan chiqib ketadi (Leave Chat)."""
+        from telethon.errors import FloodWaitError
+
         client = await AccountCleanerService.get_client(user_id)
         left_count = 0
 
@@ -296,6 +351,17 @@ class AccountCleanerService:
                 await client.delete_dialog(ch_id)
                 left_count += 1
                 await asyncio.sleep(0.4)
+            except FloodWaitError as fe:
+                if fe.seconds <= 15:
+                    await asyncio.sleep(fe.seconds + 1)
+                    try:
+                        await client.delete_dialog(ch_id)
+                        left_count += 1
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(f"Katta FloodWait ({fe.seconds}s), to'xtatildi")
+                    break
             except Exception as e:
                 logger.warning(f"Kanal/guruhdan chiqishda xatolik ({ch_id}): {e}")
 
@@ -346,6 +412,8 @@ class AccountCleanerService:
     @staticmethod
     async def delete_old_dialogs(user_id: int, dialog_ids: list[int]) -> int:
         """Eski dialoglarni tozalaydi."""
+        from telethon.errors import FloodWaitError
+
         client = await AccountCleanerService.get_client(user_id)
         deleted_count = 0
 
@@ -354,6 +422,17 @@ class AccountCleanerService:
                 await client.delete_dialog(d_id, revoke=False)
                 deleted_count += 1
                 await asyncio.sleep(0.3)
+            except FloodWaitError as fe:
+                if fe.seconds <= 15:
+                    await asyncio.sleep(fe.seconds + 1)
+                    try:
+                        await client.delete_dialog(d_id, revoke=False)
+                        deleted_count += 1
+                    except Exception:
+                        pass
+                else:
+                    logger.warning(f"Katta FloodWait ({fe.seconds}s), to'xtatildi")
+                    break
             except Exception as e:
                 logger.warning(f"Dialogni o'chirishda xatolik ({d_id}): {e}")
 
