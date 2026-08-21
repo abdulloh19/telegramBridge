@@ -1,5 +1,5 @@
 services:
-  - type: worker
+  - type: web
     name: telegram-dev-bridge
     env: python
     region: frankfurt
@@ -17,3 +17,5 @@ services:
         sync: false
       - key: TELEGRAM_API_HASH
         sync: false
+      - key: PORT
+        value: 10000

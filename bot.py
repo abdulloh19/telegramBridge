@@ -129,6 +129,25 @@ async def main():
     await setup_bot_commands(bot)
     await notify_admins_on_startup(bot)
 
+    # Render.com yoki boshqa bepul bulutli platformalarda Free Web Service ($0) bo'lib ishlashi uchun port tinglovchi
+    port_str = os.getenv("PORT")
+    if port_str:
+        try:
+            from aiohttp import web
+            port = int(port_str)
+            app = web.Application()
+            async def _health_handler(req):
+                return web.Response(text="🟢 Telegram Dev Bridge 24/7 faol!", content_type="text/plain")
+            app.router.add_get("/", _health_handler)
+            app.router.add_get("/health", _health_handler)
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, "0.0.0.0", port)
+            await site.start()
+            logger.info(f"Render Free Web Service serveri 0.0.0.0:{port} da ishga tushdi.")
+        except Exception as web_err:
+            logger.warning(f"Web serverni ishga tushirishda xatolik (zararsiz): {web_err}")
+
     bot_info = await bot.get_me()
     logger.info(f"Bot muvaffaqiyatli ishga tushdi: @{bot_info.username} ({bot_info.first_name})")
     logger.info(f"Ruxsat berilgan Admin ID lar: {list(ADMIN_IDS)}")
