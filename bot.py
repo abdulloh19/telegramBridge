@@ -75,20 +75,44 @@ async def main():
     print(BANNER)
     logger.info("Bot ishga tushirilmoqda...")
 
+    # 1. Render.com bepul Web Service ($0) portini birinchi navbatda ishga tushirish (Crash bo'lmasligi uchun)
+    import os
+    port_str = os.getenv("PORT")
+    if port_str:
+        try:
+            from aiohttp import web
+            port = int(port_str)
+            app = web.Application()
+            async def _health_handler(req):
+                return web.Response(text="🟢 Telegram Dev Bridge 24/7 faol!", content_type="text/plain")
+            app.router.add_get("/", _health_handler)
+            app.router.add_get("/health", _health_handler)
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, "0.0.0.0", port)
+            await site.start()
+            logger.info(f"Render Free Web Service serveri 0.0.0.0:{port} da muvaffaqiyatli ishga tushdi.")
+        except Exception as web_err:
+            logger.warning(f"Web serverni ishga tushirishda xatolik (zararsiz): {web_err}")
+
+    # 2. BOT_TOKEN mavjudligini tekshirish
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN_HERE":
         logger.error(
-            "XATOLIK: BOT_TOKEN topilmadi! Iltimos, .env faylini oching va @BotFather dan olingan bot tokenni kiriting."
+            "❌ XATOLIK: BOT_TOKEN topilmadi!\n"
+            "Iltimos, Render Dashboard -> Environment bo'limiga kiring va BOT_TOKEN o'zgaruvchisini qo'shing."
         )
+        if port_str:
+            logger.info("Web server xizmati faol saqlanmoqda. Token kiritilgach qayta ishga tushadi.")
+            while True:
+                await asyncio.sleep(3600)
         sys.exit(1)
 
-    # PythonAnywhere va boshqa serverlar uchun proksi tekshiruvi
-    import os
+    # 3. PythonAnywhere va boshqa serverlar uchun proksi tekshiruvi
     import platform
     from pathlib import Path
     from aiogram.client.session.aiohttp import AiohttpSession
 
     proxy_url = os.getenv("HTTP_PROXY") or os.getenv("http_proxy") or os.getenv("HTTPS_PROXY")
-    # Agar PythonAnywhere serverida bo'lsa
     if not proxy_url:
         is_pa = any([
             "PYTHONANYWHERE_DOMAIN" in os.environ,
@@ -104,11 +128,9 @@ async def main():
 
     session = AiohttpSession(proxy=proxy_url) if proxy_url else None
 
-
-    # Bot va Dispatcher yaratish
+    # 4. Bot va Dispatcher yaratish
     bot = Bot(token=BOT_TOKEN, session=session)
     dp = Dispatcher(storage=MemoryStorage())
-
 
     # Xavfsizlik Middleware sini o'rnatish
     auth_middleware = AuthMiddleware()
@@ -124,29 +146,9 @@ async def main():
     dp.include_router(cleaner.router)
     dp.include_router(media_downloader.router)
 
-
     # Buyruqlar menyusi va xabarnoma
     await setup_bot_commands(bot)
     await notify_admins_on_startup(bot)
-
-    # Render.com yoki boshqa bepul bulutli platformalarda Free Web Service ($0) bo'lib ishlashi uchun port tinglovchi
-    port_str = os.getenv("PORT")
-    if port_str:
-        try:
-            from aiohttp import web
-            port = int(port_str)
-            app = web.Application()
-            async def _health_handler(req):
-                return web.Response(text="🟢 Telegram Dev Bridge 24/7 faol!", content_type="text/plain")
-            app.router.add_get("/", _health_handler)
-            app.router.add_get("/health", _health_handler)
-            runner = web.AppRunner(app)
-            await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", port)
-            await site.start()
-            logger.info(f"Render Free Web Service serveri 0.0.0.0:{port} da ishga tushdi.")
-        except Exception as web_err:
-            logger.warning(f"Web serverni ishga tushirishda xatolik (zararsiz): {web_err}")
 
     bot_info = await bot.get_me()
     logger.info(f"Bot muvaffaqiyatli ishga tushdi: @{bot_info.username} ({bot_info.first_name})")
