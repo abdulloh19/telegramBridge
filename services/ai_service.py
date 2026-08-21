@@ -230,8 +230,11 @@ class AIService:
             f"Vazifani bajarish uchun zarur vositalardan foydalan. Ishni to'liq tugatganingda barcha o'zgarishlar va natijalarni o'zbek tilida chiroyli xulosa qilib ber."
         )
 
-        conversation_history = [
-            {"role": "user", "parts": [f"Vazifa: {instruction}"]}
+        conversation_history: list[types.Content] = [
+            types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=f"Vazifa: {instruction}")]
+            )
         ]
 
         action_log = []
@@ -336,10 +339,20 @@ class AIService:
 
             if not function_calls:
                 # Agar agent boshqa tool chaqirmasa, xulosani qaytaramiz
-                summary = response.text or "Vazifa bajarildi."
+                summary = response.text or "Vazifa muvaffaqiyatli bajarildi."
                 return summary
 
-            # Asboblarni bajarish
+            # Modelning javobini (tool_call ni) tarixga saqlash
+            if hasattr(response, "candidates") and response.candidates and response.candidates[0].content:
+                conversation_history.append(response.candidates[0].content)
+            else:
+                conversation_history.append(types.Content(
+                    role="model",
+                    parts=[types.Part.from_text(text="Tools chaqirilmoqda...")]
+                ))
+
+            # Asboblarni bajarish va natijalarni to'plash
+            tool_response_parts = []
             for fc in function_calls:
                 fn_name = fc.name
                 fn_args = fc.args or {}
@@ -387,14 +400,17 @@ class AIService:
                 except Exception as tool_err:
                     tool_result = f"Asbobni bajarishda xatolik: {str(tool_err)}"
 
-                # Kontekstga natijani qo'shish
-                conversation_history.append({
-                    "role": "model",
-                    "parts": [f"Chaqirilgan asbob: {fn_name}({fn_args})"]
-                })
-                conversation_history.append({
-                    "role": "user",
-                    "parts": [f"Asbob natijasi ({fn_name}):\n{tool_result}"]
-                })
+                tool_response_parts.append(
+                    types.Part.from_function_response(
+                        name=fn_name,
+                        response={"result": tool_result}
+                    )
+                )
+
+            # Bajarilgan barcha tool natijalarini tarixga qo'shish
+            conversation_history.append(types.Content(
+                role="tool",
+                parts=tool_response_parts
+            ))
 
         return "⚠️ Agent ruxsat etilgan maksimal qadamlar soniga yetdi. Joriy holatni fayllar bo'limidan tekshirishingiz mumkin."
