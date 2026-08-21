@@ -213,3 +213,27 @@ def confirm_clean_keyboard(action_type: str, count: int) -> InlineKeyboardMarkup
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+
+def start_main_inline_keyboard() -> InlineKeyboardMarkup:
+    """Bosh menyu uchun tezkor interaktiv inline tugmalar."""
+    buttons = [
+        [
+            InlineKeyboardButton(text="📁 Fayllar Menejeri", callback_data="open_files"),
+            InlineKeyboardButton(text="💻 Terminal", callback_data="open_terminal"),
+        ],
+        [
+            InlineKeyboardButton(text="🤖 AI Agent", callback_data="open_ai"),
+            InlineKeyboardButton(text="📊 Tizim Holati", callback_data="sys_status"),
+        ],
+        [
+            InlineKeyboardButton(text="🧹 Hisobni Tozalash", callback_data="open_cleaner"),
+            InlineKeyboardButton(text="📥 Video Yuklash", callback_data="open_dl"),
+        ],
+        [
+            InlineKeyboardButton(text="📸 Ekran Skrinshoti", callback_data="sys_screenshot"),
+            InlineKeyboardButton(text="📖 Qo'llanma", callback_data="open_help"),
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+

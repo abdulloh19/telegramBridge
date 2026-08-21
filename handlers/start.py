@@ -3,6 +3,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from keyboards.reply import get_main_reply_keyboard
+from keyboards.inline import start_main_inline_keyboard
 from config import get_user_cwd
 from utils.helpers import escape_html
 
@@ -22,19 +23,20 @@ async def cmd_start(message: Message, state: FSMContext):
         "smartfoningizdagi Telegram orqali loyihalaringizni to'liq boshqara olasiz.\n\n"
         f"📂 <b>Joriy ishchi papka:</b>\n<code>{escape_html(str(cwd))}</code>\n\n"
         "✨ <b>Asosiy Imkoniyatlar:</b>\n"
-        "• 📁 <b>Fayllar Menejeri:</b> Fayllarni ko'rish, tahrirlash, yaratish, yuklab olish\n"
-        "• 💻 <b>Terminal:</b> PowerShell/CMD buyruqlarini masofadan bajarish (/sh yoki 💻 Terminal)\n"
-        "• 🤖 <b>AI Agent:</b> Koddagi xatolarni tuzatish (/fix), avtonom kod yozish (/agent)\n"
-        "• 📊 <b>Monitoring:</b> CPU, RAM, Disk, Batareya va Uptime\n"
-        "• 📸 <b>Skrinshot:</b> Kompyuter ekranining ayni damdagi rasmini olish\n"
-        "• 🧹 <b>Hisobni Tozalash:</b> 'Deleted Account' chatlar, nofaol kanallardan chiqish va eski dialoglarni tozalash (/cleaner, /clean_old)\n\n"
-        "<i>Quyidagi tezkor tugmalardan foydalanishingiz yoki /help yozishingiz mumkin.</i>"
+        "• 📁 <b>Fayllar Menejeri:</b> Fayllarni ko'rish, tahrirlash, yuklab olish\n"
+        "• 💻 <b>Terminal:</b> Masofadan buyruqlarni bajarish (/sh yoki 💻 Terminal)\n"
+        "• 🤖 <b>AI Agent:</b> Xatolarni tuzatish (/fix), avtonom kod yozish (/agent)\n"
+        "• 📥 <b>Video Yuklash:</b> Yopiq (Private) va ochiq kanallardan video olish (/dl)\n"
+        "• 🧹 <b>Hisobni Tozalash:</b> 'Deleted Account' va nofaol kanallarni tozalash (/cleaner)\n"
+        "• 📊 <b>Monitoring & Skrinshot:</b> CPU, RAM va monitor ekrani\n\n"
+        "<i>Quyidagi tugmalardan birini tanlang yoki buyruq yuboring:</i>"
     )
 
+    # Avval pastki asosiy reply klaviaturani yangilaymiz
     await message.answer(
         welcome_text,
         parse_mode="HTML",
-        reply_markup=get_main_reply_keyboard()
+        reply_markup=start_main_inline_keyboard()
     )
 
 
@@ -63,23 +65,22 @@ async def cmd_help(message: Message, state: FSMContext):
         "• <code>/explain &lt;fayl&gt;</code> — Fayl kodi ishlashini tushuntirish\n"
         "• <code>/review &lt;fayl&gt;</code> — Kodni tozalik va xavfsizlikka tekshirish\n"
         "• <code>/ai &lt;savol&gt;</code> — AI dan to'g'ridan-to'g'ri maslahat olish\n\n"
+        "📥 <b>Telegram Media / Video Yuklovchi:</b>\n"
+        "• <code>/dl &lt;link&gt;</code> — Yopiq (Private) yoki ommaviy kanaldan video yuklab olish\n"
+        "• <code>📥 Video Yuklash</code> — Interaktiv video yuklash menyusi\n\n"
+        "🧹 <b>Telegram Hisobni Tozalash (Account Cleaner):</b>\n"
+        "• <code>/cleaner</code> — Tozalash boshqaruv panelini ochish\n"
+        "• <code>/clean_deleted</code> — O'chib ketgan ('Deleted Account') chatlarni tozalash\n"
+        "• <code>/clean_channels [kun]</code> — Nofaol kanallar va guruhlardan chiqish\n"
+        "• <code>/clean_old [kun]</code> — Eski yozishmalarni tozalash\n"
+        "• <code>/set_api</code> — Telegram API_ID va API_HASH ni kiritish\n"
+        "• <code>/cleaner_logout</code> — Telethon hisobidan chiqish\n\n"
         "📊 <b>Tizim va Kompyuter:</b>\n"
         "• <code>/status</code> — CPU, RAM, Disk, Batareya statistikasi\n"
         "• <code>/screenshot</code> — Kompyuter monitoridan skrinshot olish\n"
         "• <code>/processes</code> — Ishlayotgan jarayonlar (Top RAM/CPU)\n"
         "• <code>/kill &lt;pid&gt;</code> — Jarayonni to'xtatish\n"
-        "• <code>/lock</code> — Kompyuter ekranini bloklash (Lock)\n"
-        "• <code>/notify &lt;xabar&gt;</code> — Windows ekranida bildirishnoma chiqarish\n\n"
-        "🧹 <b>Telegram Hisobni Tozalash (Account Cleaner):</b>\n"
-        "• <code>/cleaner</code> — Tozalash boshqaruv panelini ochish\n"
-        "• <code>/clean_deleted</code> — O'chib ketgan ('Deleted Account') chatlarni tozalash\n"
-        "• <code>/clean_channels [kun]</code> — Nofaol (standart 60 kun) kanallar va guruhlardan chiqish\n"
-        "• <code>/clean_old [kun]</code> — Eski (standart 90 kun, masalan: <code>/clean_old 30</code>) yozishmalarni tozalash\n"
-        "• <code>/set_api</code> — Telegram API_ID va API_HASH ni kiritish\n"
-        "• <code>/cleaner_logout</code> — Telethon hisobidan chiqish\n\n"
-        "📥 <b>Telegram Media / Video Yuklovchi:</b>\n"
-        "• <code>/dl &lt;link&gt;</code> — Yopiq (Private) yoki ommaviy kanaldan video yuklab olish (masalan: <code>/dl https://t.me/c/1234567890/45</code>)\n"
-        "• <code>📥 Video Yuklash</code> — Interaktiv video yuklash menyusi"
+        "• <code>/lock</code> — Kompyuter ekranini bloklash"
     )
     await message.answer(help_text, parse_mode="HTML")
 
@@ -89,7 +90,49 @@ async def btn_settings_help(message: Message, state: FSMContext):
     await cmd_help(message, state)
 
 
+@router.callback_query(F.data == "open_help")
+async def cb_open_help(callback: CallbackQuery, state: FSMContext):
+    await cmd_help(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "open_files")
+async def cb_open_files(callback: CallbackQuery, state: FSMContext):
+    from handlers.files import cmd_files
+    await cmd_files(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "open_terminal")
+async def cb_open_terminal(callback: CallbackQuery, state: FSMContext):
+    from handlers.terminal import cmd_interactive_terminal
+    await cmd_interactive_terminal(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "open_ai")
+async def cb_open_ai(callback: CallbackQuery, state: FSMContext):
+    from handlers.ai_agent import cmd_agent_interactive
+    await cmd_agent_interactive(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "open_cleaner")
+async def cb_open_cleaner(callback: CallbackQuery, state: FSMContext):
+    from handlers.cleaner import cmd_cleaner_menu
+    await cmd_cleaner_menu(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "open_dl")
+async def cb_open_dl(callback: CallbackQuery, state: FSMContext):
+    from handlers.media_downloader import cmd_download_media
+    await cmd_download_media(callback.message, state, callback.bot)
+    await callback.answer()
+
+
 @router.callback_query(F.data == "noop")
 async def cb_noop(callback: CallbackQuery):
     """Hech narsa qilmaydigan indikator tugma."""
     await callback.answer()
+
