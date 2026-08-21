@@ -9,8 +9,9 @@ from services.account_cleaner_service import AccountCleanerService
 from utils.helpers import format_bytes, escape_html
 from utils.logger import logger
 
-DOWNLOADS_DIR = BASE_DIR / "downloads"
-DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+VIDEOS_DIR = BASE_DIR / "videolar"
+VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+DOWNLOADS_DIR = VIDEOS_DIR
 
 
 class MediaDownloaderService:

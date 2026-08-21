@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from services.media_downloader_service import MediaDownloaderService, DOWNLOADS_DIR
+from services.media_downloader_service import MediaDownloaderService, VIDEOS_DIR, DOWNLOADS_DIR
 from services.account_cleaner_service import AccountCleanerService
 from keyboards.inline import cleaner_login_methods_keyboard
 from utils.helpers import escape_html, format_bytes
@@ -106,7 +106,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
         results = await MediaDownloaderService.download_videos_from_link(
             user_id=user_id,
             link=link,
-            save_dir=DOWNLOADS_DIR,
+            save_dir=VIDEOS_DIR,
             progress_callback=_on_progress
         )
 
@@ -118,38 +118,37 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
             )
             return
 
-        await status_msg.edit_text(f"✅ <b>{len(results)} ta video muvaffaqiyatli yuklab olindi!</b>\nTelegramga yuborilmoqda...", parse_mode="HTML")
+        await status_msg.edit_text(f"✅ <b>{len(results)} ta video yuklab olindi!</b>\nTelegramga va Saqlangan xabarlarga (Избранное) yuborilmoqda...", parse_mode="HTML")
+
+        is_auth = await AccountCleanerService.is_authorized(user_id)
+        client = await AccountCleanerService.get_client(user_id) if is_auth else None
 
         for item in results:
             file_path = Path(item["path"])
             file_size_mb = item["size_bytes"] / (1024 * 1024)
 
-            # Agar fayl 50 MB dan kichik bo'lsa, to'g'ridan-to'g'ri Telegram chatga video qilib yuboramiz
+            caption = (
+                f"🎬 <b>{escape_html(item['filename'])}</b>\n"
+                f"📊 <b>Hajmi:</b> {item['size_formatted']}\n"
+                f"📁 <b>Papka:</b> <code>videolar/{file_path.name}</code>\n"
+                f"⭐️ <b>Izbrannoe (Saqlangan xabarlar)</b> ga joylandi"
+            )
+
+            # 1. Bot chatiga yuborish
             if file_size_mb <= 49.5:
                 try:
                     video_file = FSInputFile(str(file_path), filename=item["filename"])
-                    caption = (
-                        f"🎬 <b>{escape_html(item['filename'])}</b>\n"
-                        f"📊 Hajmi: {item['size_formatted']}\n"
-                        f"💾 Saqlandi: <code>downloads/{file_path.name}</code>"
-                    )
                     await message.answer_video(video_file, caption=caption, parse_mode="HTML")
                 except Exception as send_err:
                     logger.warning(f"Video yuborishda xato, fayl qilib yuborilmoqda: {send_err}")
                     doc_file = FSInputFile(str(file_path), filename=item["filename"])
-                    await message.answer_document(doc_file, caption=f"🎬 <b>{escape_html(item['filename'])}</b>", parse_mode="HTML")
+                    await message.answer_document(doc_file, caption=caption, parse_mode="HTML")
             else:
-                # 50 MB dan katta bo'lsa (2 GB gacha), Telethon orqali cheklovsiz chatga yuboramiz!
-                caption = (
-                    f"🎬 <b>{escape_html(item['filename'])}</b>\n"
-                    f"📊 Hajmi: {item['size_formatted']} (Katta hajm)\n"
-                    f"💾 Saqlandi: <code>downloads/{file_path.name}</code>"
-                )
+                # 50 MB dan katta bo'lsa (2 GB gacha), Telethon orqali chatga yuboramiz!
                 sent_via_telethon = False
                 try:
-                    if await AccountCleanerService.is_authorized(user_id):
-                        upload_notice = await message.answer(f"📤 <b>{escape_html(item['filename'])}</b> ({item['size_formatted']}) katta hajm bo'lgani uchun Telethon orqali chatga yuborilmoqda...")
-                        client = await AccountCleanerService.get_client(user_id)
+                    if client:
+                        upload_notice = await message.answer(f"📤 <b>{escape_html(item['filename'])}</b> ({item['size_formatted']}) chatga uzatilmoqda...")
                         await client.send_file(
                             user_id,
                             file=str(file_path),
@@ -172,6 +171,24 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
                         f"Uni /files bo'limidan boshqarishingiz mumkin.",
                         parse_mode="HTML"
                     )
+
+            # 2. Avtomatik tarzda shaxsiy "Saqlangan xabarlar" (Избранное / Saved Messages) ga yuborish
+            if client:
+                try:
+                    saved_caption = (
+                        f"🎬 <b>{escape_html(item['filename'])}</b>\n"
+                        f"📊 <b>Hajmi:</b> {item['size_formatted']}\n"
+                        f"📁 <b>Loyiha papkasi:</b> <code>videolar/{file_path.name}</code>"
+                    )
+                    await client.send_file(
+                        'me',
+                        file=str(file_path),
+                        caption=saved_caption,
+                        parse_mode="html",
+                        supports_streaming=True
+                    )
+                except Exception as me_err:
+                    logger.warning(f"Izbrannoega video yuborishda xato: {me_err}")
 
         await status_msg.delete()
 
