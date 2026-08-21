@@ -164,6 +164,73 @@ class AccountCleanerService:
             return False
 
     @staticmethod
+    async def create_qr_login(user_id: int):
+        """QR kod orqali kirishni boshlaydi va (qr_login_ob'ekti, qrcode_image_bytes) qaytaradi."""
+        import qrcode
+        import io
+
+        if user_id in AccountCleanerService._clients:
+            try:
+                old = AccountCleanerService._clients[user_id]
+                if old.is_connected():
+                    await old.disconnect()
+            except Exception:
+                pass
+            AccountCleanerService._clients.pop(user_id, None)
+
+        client = await AccountCleanerService.get_client(user_id)
+        if not client.is_connected():
+            await client.connect()
+
+        qr = await client.qr_login()
+        img = qrcode.make(qr.url)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return qr, buf
+
+    @staticmethod
+    async def wait_for_qr_login(user_id: int, qr_obj, password: Optional[str] = None) -> tuple[bool, str]:
+        """QR kod skanerlanishini yoki 2FA parolini tekshiradi."""
+        from telethon.errors import (
+            SessionPasswordNeededError,
+            PasswordHashInvalidError,
+            FloodWaitError
+        )
+
+        client = await AccountCleanerService.get_client(user_id)
+        try:
+            if password:
+                try:
+                    await client.sign_in(password=password)
+                    me = await client.get_me()
+                    first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
+                    username = f"@{me.username}" if getattr(me, 'username', None) else f"ID: {me.id}"
+                    return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
+                except PasswordHashInvalidError:
+                    return False, "❌ 2FA paroli noto'g'ri kiritildi!"
+                except FloodWaitError as fe:
+                    time_str = format_seconds(fe.seconds)
+                    return False, f"⏳ Telegram cheklovi (FloodWait): Iltimos, {time_str} kuting."
+                except Exception as err:
+                    return False, f"2FA bilan kirishda xatolik: {str(err)}"
+
+            await qr_obj.wait(timeout=45)
+            me = await client.get_me()
+            first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
+            username = f"@{me.username}" if getattr(me, 'username', None) else f"ID: {me.id}"
+            return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
+        except SessionPasswordNeededError:
+            return False, "2FA_REQUIRED"
+        except asyncio.TimeoutError:
+            return False, "TIMEOUT"
+        except Exception as e:
+            err_text = str(e)
+            if "SessionPasswordNeededError" in err_text:
+                return False, "2FA_REQUIRED"
+            return False, f"Kirishda xatolik: {err_text}"
+
+    @staticmethod
     async def send_auth_code(user_id: int, phone: str) -> tuple[str, str]:
         """Telefon raqamga Telegram tasdiqlash kodini yuboradi va kod qayerga yuborilgani haqida ma'lumot beradi."""
         from telethon.errors import (
@@ -171,6 +238,16 @@ class AccountCleanerService:
             PhoneNumberInvalidError,
             PhoneNumberBannedError,
         )
+
+        # Yangi urinish uchun eski nofaol ulanishni yangilash
+        if user_id in AccountCleanerService._clients:
+            try:
+                old = AccountCleanerService._clients[user_id]
+                if not await old.is_user_authorized():
+                    await old.disconnect()
+                    AccountCleanerService._clients.pop(user_id, None)
+            except Exception:
+                AccountCleanerService._clients.pop(user_id, None)
 
         client = await AccountCleanerService.get_client(user_id)
         if not client.is_connected():
@@ -209,7 +286,7 @@ class AccountCleanerService:
             time_str = format_seconds(e.seconds)
             raise RuntimeError(
                 f"Telegram cheklovi (FloodWait)! Juda ko'p kod so'ralgani uchun Telegram vaqtincha blokladi. "
-                f"Iltimos, {time_str} kuting va so'ng qayta urinib ko'ring."
+                f"Iltimos, {time_str} kuting yoki QR Kod orqali kiring."
             )
         except PhoneNumberInvalidError:
             raise ValueError("Telefon raqam noto'g'ri kiritildi! Masalan: +998901234567")
@@ -222,6 +299,15 @@ class AccountCleanerService:
                     "PythonAnywhere (bepul tarif) Telegram MTProto ulanishini cheklaydi (403 Forbidden). "
                     "Cleaner to'liq ishlashi uchun botni o'zingizning kompyuteringizda (run.bat) ishga tushiring."
                 )
+            if "ResendCodeRequest" in err_text or "all available options" in err_text:
+                # Kod allaqachon yuborilgan bo'lsa, xatolik chiqarmaydi
+                saved_hash = AccountCleanerService._phone_hashes.get(user_id, "")
+                return (
+                    saved_hash,
+                    "📲 <b>Telegram ilovangizga allaqachon kod yuborilgan!</b>\n\n"
+                    "Telegram ilovasidagi rasmiy «Telegram» (Service Notifications) chatini oching va kelgan 5 xonali kodni yozing."
+                )
+
             logger.warning(f"Telegram bilan ulanishda xato, qayta ulanmoqda: {e}")
             try:
                 await client.connect()
@@ -233,10 +319,18 @@ class AccountCleanerService:
                 time_str = format_seconds(fe.seconds)
                 raise RuntimeError(f"Telegram cheklovi (FloodWait)! Iltimos, {time_str} kuting.")
             except Exception as e2:
-                if "403" in str(e2) or "forbidden" in str(e2).lower():
+                err2_text = str(e2)
+                if "403" in err2_text or "forbidden" in err2_text.lower():
                     raise RuntimeError(
                         "PythonAnywhere bepul tarifida 403 Forbidden cheklovi mavjud. "
                         "Botni o'z kompyuteringizda ishga tushiring."
+                    )
+                if "ResendCodeRequest" in err2_text or "all available options" in err2_text:
+                    saved_hash = AccountCleanerService._phone_hashes.get(user_id, "")
+                    return (
+                        saved_hash,
+                        "📲 <b>Telegram ilovangizga allaqachon kod yuborilgan!</b>\n\n"
+                        "Telegram ilovasidagi rasmiy «Telegram» chatini oching va 5 xonali kodni yozing."
                     )
                 raise e2
 

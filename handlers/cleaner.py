@@ -1,10 +1,11 @@
+import asyncio
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from services.account_cleaner_service import AccountCleanerService
-from keyboards.inline import cleaner_main_keyboard, confirm_clean_keyboard
+from keyboards.inline import cleaner_main_keyboard, confirm_clean_keyboard, cleaner_login_methods_keyboard
 from utils.helpers import escape_html
 from utils.logger import logger
 
@@ -13,12 +14,14 @@ router = Router()
 # Keshda topilgan elementlarni saqlash (chat_id -> list of ids)
 _SCANNED_CHANNELS: dict[int, list[int]] = {}
 _SCANNED_OLD_DIALOGS: dict[int, list[int]] = {}
+_ACTIVE_QR_LOGINS: dict[int, object] = {}
 
 
 class CleanerStates(StatesGroup):
     waiting_for_phone = State()
     waiting_for_code = State()
     waiting_for_2fa = State()
+    waiting_for_qr_2fa = State()
 
 
 @router.message(Command("cleaner"), StateFilter("*"))
@@ -38,35 +41,35 @@ async def cmd_cleaner_menu(message: Message, state: FSMContext):
             "• 🚪 <b>Faol bo'lmagan kanallar:</b> Ancha vaqt kirmagan/yopiq kanallardan chiqish (Leave)\n"
             "• ⏱️ <b>Eski dialoglar:</b> Belgilangan vaqtdan eski yozishmalarni o'chirish\n\n"
             "⚠️ <b>Ishlatish uchun:</b>\n"
-            "Telegram hisobingizga ulanish uchun <code>.env</code> fayliga <code>TELEGRAM_API_ID</code> va <code>TELEGRAM_API_HASH</code> kiritilishi kerak.\n\n"
-            "<i>(Quyidagi tugma orqali yo'riqnomani ko'rishingiz mumkin)</i>"
+            "Telegram API ma'lumotlarini (<code>TELEGRAM_API_ID</code> va <code>TELEGRAM_API_HASH</code>) "
+            "<code>.env</code> faylida ko'rsatish zarur.\n"
+            "Buning uchun quyidagi yo'riqnomani bosing:"
         )
         await message.answer(text, parse_mode="HTML", reply_markup=cleaner_main_keyboard(is_auth=False))
         return
 
     if not is_auth:
         text = (
-            "🧹 <b>Telegram Hisobni Tozalash</b>\n\n"
-            "⚡ API kalitlar sozlangan, lekin hisobingizga hali kirilmagan.\n\n"
-            "Hisobingizni tozalashni boshlash uchun <b>'Telegram Hisobiga Kirish'</b> tugmasini bosing:"
+            "🧹 <b>Telegram Hisobni Tozalash (Account Cleaner)</b>\n\n"
+            "Hisobingizni tozalash uchun avval Telegram akkauntingizni ulang.\n\n"
+            "<i>Istalgan qulay usulni tanlang:</i>"
         )
-        await message.answer(text, parse_mode="HTML", reply_markup=cleaner_main_keyboard(is_auth=False))
+        await message.answer(text, parse_mode="HTML", reply_markup=cleaner_login_methods_keyboard())
         return
 
     text = (
-        "🧹 <b>Telegram Hisobni Tozalash Menejeri</b>\n\n"
-        "🟢 <b>Hisobingiz muvaffaqiyatli ulangan!</b>\n\n"
-        "Quyidagi tozalash amallaridan birini tanlang:\n"
-        "• <code>/clean_deleted</code> — O'chgan hisoblarni tozalash\n"
-        "• <code>/clean_channels [kun]</code> — Nofaol kanallardan chiqish (masalan: <code>/clean_channels 60</code>)\n"
-        "• <code>/clean_old [kun]</code> — Eski dialoglarni tozalash (masalan: <code>/clean_old 90</code> yoki <code>/clean_old 30</code>)"
+        "🧹 <b>Telegram Hisobni Tozalash Markazi</b>\n\n"
+        "Kerakli bo'limni tanlang:\n"
+        "• <b>O'chgan hisoblar</b> — 'Deleted Account' bo'lib qolgan foydalanuvchilar bilan chatlarni tozalash;\n"
+        "• <b>Nofaol kanallar</b> — 60 kundan ortiq yangilik bo'lmagan kanal/guruhlardan chiqish;\n"
+        "• <b>Eski dialoglar</b> — 90 kundan eski yozishmalarni tozalash."
     )
     await message.answer(text, parse_mode="HTML", reply_markup=cleaner_main_keyboard(is_auth=True))
 
 
 @router.callback_query(F.data == "cl_help_api")
 async def cb_help_api(callback: CallbackQuery):
-    """API_ID olish yo'riqnomasi."""
+    """API olish yo'riqnomasini ko'rsatish."""
     text = (
         "📖 <b>Telegram API_ID va API_HASH olish (1 daqiqa):</b>\n\n"
         "1. Brauzerda <a href='https://my.telegram.org'>my.telegram.org</a> saytiga kiring;\n"
@@ -80,9 +83,101 @@ async def cb_help_api(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "cl_start_login")
+@router.callback_query(F.data == "cl_login_qr")
+async def cb_login_qr(callback: CallbackQuery, state: FSMContext):
+    """QR kod orqali tezkor kirish."""
+    await state.clear()
+    user_id = callback.from_user.id
+    if not AccountCleanerService.is_configured():
+        await callback.answer("Avval .env ga TELEGRAM_API_ID va TELEGRAM_API_HASH ni kiriting!", show_alert=True)
+        return
+
+    status_msg = await callback.message.answer("⏳ QR Kod yaratilmoqda...")
+    await callback.answer()
+
+    try:
+        qr_obj, buf = await AccountCleanerService.create_qr_login(user_id)
+        _ACTIVE_QR_LOGINS[user_id] = qr_obj
+
+        caption = (
+            "📷 <b>Telegram QR Kod orqali kirish:</b>\n\n"
+            "1. Telefoningizda <b>Telegram</b> ilovasini oching;\n"
+            "2. <b>Sozlamalar ➡️ Qurilmalar ➡️ Qurilmani ulash (Scan QR)</b> bo'limiga kiring;\n"
+            "3. Kamerani ushbu QR kodga qarating!\n\n"
+            "⏳ <i>QR kod 45 soniya davomida faol...</i>"
+        )
+        photo = BufferedInputFile(buf.getvalue(), filename="telegram_qr.png")
+        qr_msg = await callback.message.answer_photo(photo, caption=caption, parse_mode="HTML")
+        await status_msg.delete()
+
+        # Orqa fonda QR skanerlanishini kutish
+        async def _wait_qr():
+            ok, res = await AccountCleanerService.wait_for_qr_login(user_id, qr_obj)
+            if ok:
+                await qr_msg.reply(
+                    f"{res}\n\n🎉 <b>Hisobingiz muvaffaqiyatli ulandi!</b>",
+                    reply_markup=cleaner_main_keyboard(is_auth=True),
+                    parse_mode="HTML"
+                )
+            elif res == "2FA_REQUIRED":
+                await state.set_state(CleanerStates.waiting_for_qr_2fa)
+                await qr_msg.reply(
+                    "🔒 <b>Akkauntingizda 2FA (ikki bosqichli parol) o'rnatilgan.</b>\n\n"
+                    "Iltimos, 2FA parolingizni shu yerga yozib yuboring (Bekor qilish: /cancel):",
+                    parse_mode="HTML"
+                )
+            elif res == "TIMEOUT":
+                await qr_msg.reply(
+                    "⌛ <b>QR kod muddati tugadi.</b>\nQaytadan QR olish uchun tugmani bosing:",
+                    reply_markup=cleaner_login_methods_keyboard(),
+                    parse_mode="HTML"
+                )
+            else:
+                await qr_msg.reply(f"❌ {res}", reply_markup=cleaner_login_methods_keyboard())
+
+        asyncio.create_task(_wait_qr())
+
+    except Exception as e:
+        logger.error(f"QR kod yaratishda xatolik: {e}")
+        await status_msg.edit_text(
+            f"❌ <b>QR kod yaratishda xatolik:</b> {escape_html(str(e))}\n\n"
+            "Iltimos, telefon raqam orqali kirishni sinab ko'ring.",
+            reply_markup=cleaner_login_methods_keyboard(),
+            parse_mode="HTML"
+        )
+
+
+@router.message(CleanerStates.waiting_for_qr_2fa)
+async def handle_qr_2fa_input(message: Message, state: FSMContext):
+    """QR login uchun 2FA parolini qabul qilish."""
+    if message.text.strip().startswith("/cancel"):
+        await state.clear()
+        await message.answer("❌ Kirish jarayoni bekor qilindi.")
+        return
+
+    password = message.text.strip()
+    user_id = message.from_user.id
+    qr_obj = _ACTIVE_QR_LOGINS.get(user_id)
+    status_msg = await message.answer("⏳ 2FA paroli tekshirilmoqda...")
+
+    ok, res = await AccountCleanerService.wait_for_qr_login(user_id, qr_obj, password=password)
+    if ok:
+        await state.clear()
+        await status_msg.edit_text(
+            f"{res}\n\n🎉 <b>Hisobingiz muvaffaqiyatli ulandi!</b>",
+            reply_markup=cleaner_main_keyboard(is_auth=True),
+            parse_mode="HTML"
+        )
+    else:
+        await status_msg.edit_text(
+            f"{res}\n\n<i>Qaytadan parolni kiriting yoki bekor qilish uchun /cancel yuboring:</i>",
+            parse_mode="HTML"
+        )
+
+
+@router.callback_query(F.data.in_({"cl_start_login", "cl_login_phone"}))
 async def cb_start_login(callback: CallbackQuery, state: FSMContext):
-    """Hisobga kirish jarayonini boshlash."""
+    """Telefon raqam orqali kirish jarayonini boshlash."""
     if not AccountCleanerService.is_configured():
         await callback.answer("Avval .env ga TELEGRAM_API_ID va TELEGRAM_API_HASH ni kiriting!", show_alert=True)
         return

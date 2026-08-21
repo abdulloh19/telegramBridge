@@ -159,14 +159,21 @@ def system_actions_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def cleaner_login_methods_keyboard() -> InlineKeyboardMarkup:
+    """Telegram hisobga kirish usullari."""
+    buttons = [
+        [InlineKeyboardButton(text="📷 QR Kod orqali kirish (Tezkor va oson)", callback_data="cl_login_qr")],
+        [InlineKeyboardButton(text="📱 Telefon raqam orqali kirish", callback_data="cl_login_phone")],
+        [InlineKeyboardButton(text="📖 my.telegram.org Yo'riqnomasi", callback_data="cl_help_api")],
+        [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="cl_cancel")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def cleaner_main_keyboard(is_auth: bool = True) -> InlineKeyboardMarkup:
     """Telegram hisobni tozalash asosiy inline menyusi."""
     if not is_auth:
-        buttons = [
-            [InlineKeyboardButton(text="🔑 Telegram Hisobiga Kirish (Login)", callback_data="cl_start_login")],
-            [InlineKeyboardButton(text="📖 my.telegram.org Yo'riqnomasi", callback_data="cl_help_api")],
-        ]
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
+        return cleaner_login_methods_keyboard()
 
     buttons = [
         [
