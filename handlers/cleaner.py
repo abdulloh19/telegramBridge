@@ -1,11 +1,18 @@
 import asyncio
+import re
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from config import save_telegram_api_credentials
 from services.account_cleaner_service import AccountCleanerService
-from keyboards.inline import cleaner_main_keyboard, confirm_clean_keyboard, cleaner_login_methods_keyboard
+from keyboards.inline import (
+    cleaner_main_keyboard,
+    confirm_clean_keyboard,
+    cleaner_login_methods_keyboard,
+    cleaner_config_keyboard
+)
 from utils.helpers import escape_html
 from utils.logger import logger
 
@@ -18,10 +25,102 @@ _ACTIVE_QR_LOGINS: dict[int, object] = {}
 
 
 class CleanerStates(StatesGroup):
+    waiting_for_api_credentials = State()
     waiting_for_phone = State()
     waiting_for_code = State()
     waiting_for_2fa = State()
     waiting_for_qr_2fa = State()
+
+
+def _parse_api_credentials(text: str) -> tuple[str | None, str | None]:
+    """Foydalanuvchi kiritgan matndan API_ID va API_HASH ni ajratib oladi."""
+    clean_text = text.replace('=', ' ').replace(':', ' ').replace(',', ' ').replace('"', ' ').replace("'", ' ')
+    tokens = clean_text.split()
+    api_id, api_hash = None, None
+    for t in tokens:
+        if t.isdigit() and len(t) >= 5 and not api_id:
+            api_id = t
+        elif re.match(r'^[a-fA-F0-9]{20,40}$', t) and not api_hash:
+            api_hash = t
+    return api_id, api_hash
+
+
+@router.message(Command("set_api"), StateFilter("*"))
+async def cmd_set_api_shortcut(message: Message, state: FSMContext):
+    """API ma'lumotlarini /set_api buyrug'i orqali to'g'ridan-to'g'ri kiritish."""
+    args = message.text.split(maxsplit=1)
+    if len(args) > 1:
+        api_id, api_hash = _parse_api_credentials(args[1])
+        if api_id and api_hash:
+            save_telegram_api_credentials(api_id, api_hash)
+            await state.clear()
+            await message.answer(
+                f"✅ <b>Telegram API ma'lumotlari muvaffaqiyatli saqlandi!</b>\n\n"
+                f"🆔 <b>API_ID:</b> <code>{api_id}</code>\n"
+                f"🔑 <b>API_HASH:</b> <code>{api_hash}</code>\n\n"
+                f"Endi hisobingizga kirishingiz mumkin:",
+                parse_mode="HTML",
+                reply_markup=cleaner_login_methods_keyboard()
+            )
+            return
+
+    await state.set_state(CleanerStates.waiting_for_api_credentials)
+    await message.answer(
+        "⚙️ <b>Telegram API ma'lumotlarini kiritish:</b>\n\n"
+        "<a href='https://my.telegram.org'>my.telegram.org</a> saytidan olgan <b>API_ID</b> va <b>API_HASH</b> laringizni bitta xabarda yuboring:\n\n"
+        "Masalan:\n"
+        "<code>12345678 abcdef0123456789abcdef0123456789</code>\n\n"
+        "<i>(Bot ularni avtomatik <code>.env</code> fayliga joylaydi). Bekor qilish: /cancel</i>",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+
+@router.callback_query(F.data == "cl_set_api")
+async def cb_set_api(callback: CallbackQuery, state: FSMContext):
+    """Inline tugma orqali API ma'lumotlarini so'rash."""
+    await state.set_state(CleanerStates.waiting_for_api_credentials)
+    await callback.answer()
+    await callback.message.answer(
+        "⚙️ <b>Telegram API ma'lumotlarini kiritish:</b>\n\n"
+        "<a href='https://my.telegram.org'>my.telegram.org</a> saytidan olgan <b>API_ID</b> va <b>API_HASH</b> laringizni bitta xabarda yuboring:\n\n"
+        "Masalan:\n"
+        "<code>12345678 abcdef0123456789abcdef0123456789</code>\n\n"
+        "<i>(Bot ularni avtomatik <code>.env</code> fayliga joylaydi). Bekor qilish: /cancel</i>",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+
+@router.message(CleanerStates.waiting_for_api_credentials)
+async def handle_api_credentials_input(message: Message, state: FSMContext):
+    """Foydalanuvchi yuborgan API_ID va API_HASH ni qabul qilib .env ga saqlash."""
+    if message.text.strip().startswith("/cancel"):
+        await state.clear()
+        await message.answer("❌ Bekor qilindi.")
+        return
+
+    api_id, api_hash = _parse_api_credentials(message.text)
+    if not api_id or not api_hash:
+        await message.answer(
+            "❌ <b>Ma'lumotlar to'liq aniqlanmadi!</b>\n\n"
+            "Iltimos, API_ID (raqamlar) va API_HASH (32 ta belgi) ni birga yuboring:\n"
+            "Masalan: <code>12345678 abcdef0123456789abcdef0123456789</code>\n\n"
+            "<i>Bekor qilish uchun /cancel yuboring.</i>",
+            parse_mode="HTML"
+        )
+        return
+
+    save_telegram_api_credentials(api_id, api_hash)
+    await state.clear()
+    await message.answer(
+        f"✅ <b>Telegram API ma'lumotlari avtomatik .env ga saqlandi!</b>\n\n"
+        f"🆔 <b>API_ID:</b> <code>{api_id}</code>\n"
+        f"🔑 <b>API_HASH:</b> <code>{api_hash}</code>\n\n"
+        f"<i>Endi hisobingizga to'g'ridan-to'g'ri kirishingiz mumkin:</i>",
+        parse_mode="HTML",
+        reply_markup=cleaner_login_methods_keyboard()
+    )
 
 
 @router.message(Command("cleaner"), StateFilter("*"))
@@ -42,10 +141,10 @@ async def cmd_cleaner_menu(message: Message, state: FSMContext):
             "• ⏱️ <b>Eski dialoglar:</b> Belgilangan vaqtdan eski yozishmalarni o'chirish\n\n"
             "⚠️ <b>Ishlatish uchun:</b>\n"
             "Telegram API ma'lumotlarini (<code>TELEGRAM_API_ID</code> va <code>TELEGRAM_API_HASH</code>) "
-            "<code>.env</code> faylida ko'rsatish zarur.\n"
-            "Buning uchun quyidagi yo'riqnomani bosing:"
+            "to'g'ridan-to'g'ri botga kiritishingiz mumkin.\n"
+            "Buning uchun quyidagi tugmani bosing:"
         )
-        await message.answer(text, parse_mode="HTML", reply_markup=cleaner_main_keyboard(is_auth=False))
+        await message.answer(text, parse_mode="HTML", reply_markup=cleaner_config_keyboard())
         return
 
     if not is_auth:
@@ -76,8 +175,7 @@ async def cb_help_api(callback: CallbackQuery):
         "2. Telefon raqamingizni kiriting va Telegramga kelgan kodni yozing;\n"
         "3. <b>'API development tools'</b> bo'limiga kiring;\n"
         "4. Ixtiyoriy nom yozib (masalan: <code>CleanerApp</code>) tasdiqlang;\n"
-        "5. Chiqqan <b>api_id</b> va <b>api_hash</b> ni loyihadagi <code>.env</code> fayliga yozing:\n\n"
-        "<code>TELEGRAM_API_ID=12345678\nTELEGRAM_API_HASH=abcdef0123456789...</code>"
+        "5. Chiqqan <b>api_id</b> va <b>api_hash</b> ni nusxalab, botga <b>'⚙️ API_ID va HASH ni kiritish'</b> tugmasi orqali yuboring!"
     )
     await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
     await callback.answer()

@@ -85,15 +85,17 @@ class AccountCleanerService:
     @staticmethod
     def is_configured() -> bool:
         """API_ID va API_HASH mavjudligini tekshiradi."""
-        return bool(TELEGRAM_API_ID and TELEGRAM_API_HASH and TELEGRAM_API_ID.isdigit())
+        import config
+        return bool(config.TELEGRAM_API_ID and config.TELEGRAM_API_HASH and config.TELEGRAM_API_ID.isdigit())
 
     @staticmethod
     async def get_client(user_id: int):
         """Har bir foydalanuvchi uchun alohida Telethon mijozini asinxron tarzda qaytaradi."""
+        import config
         if not AccountCleanerService.is_configured():
             raise ValueError(
                 "Telegram API_ID va API_HASH kiritilmagan!\n"
-                "Iltimos, https://my.telegram.org dan olib, .env fayliga TELEGRAM_API_ID va TELEGRAM_API_HASH ni kiriting."
+                "Iltimos, botdagi '⚙️ API_ID va API_HASH kiritish' tugmasi orqali kiriting yoki .env faylini to'ldiring."
             )
 
         from telethon import TelegramClient
@@ -104,8 +106,8 @@ class AccountCleanerService:
             proxy = get_telethon_proxy()
             client = TelegramClient(
                 session_path,
-                int(TELEGRAM_API_ID),
-                TELEGRAM_API_HASH,
+                int(config.TELEGRAM_API_ID),
+                config.TELEGRAM_API_HASH,
                 proxy=proxy,
                 connection_retries=10,
                 timeout=25,

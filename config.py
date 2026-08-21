@@ -89,3 +89,61 @@ def is_super_admin(user_id: int) -> bool:
         return ALLOW_ALL_USERS
     return user_id in ADMIN_IDS
 
+
+def update_env_variable(key: str, value: str):
+    """
+    .env faylida ko'rsatilgan kalitni yangilaydi yoki qo'shadi,
+    hamda joriy Python muhitini darhol yangilaydi.
+    """
+    global TELEGRAM_API_ID, TELEGRAM_API_HASH, GEMINI_API_KEY, BOT_TOKEN
+
+    key = key.strip()
+    value = str(value).strip()
+    os.environ[key] = value
+
+    if key == "TELEGRAM_API_ID":
+        TELEGRAM_API_ID = value
+    elif key == "TELEGRAM_API_HASH":
+        TELEGRAM_API_HASH = value
+    elif key == "GEMINI_API_KEY":
+        GEMINI_API_KEY = value
+    elif key == "BOT_TOKEN":
+        BOT_TOKEN = value
+
+    lines = []
+    found = False
+    if ENV_PATH.exists():
+        try:
+            with open(ENV_PATH, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except Exception:
+            pass
+
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(f"{key}=") or stripped.startswith(f"{key} ="):
+            new_lines.append(f"{key}={value}\n")
+            found = True
+        else:
+            new_lines.append(line)
+
+    if not found:
+        if new_lines and not new_lines[-1].endswith("\n"):
+            new_lines[-1] += "\n"
+        new_lines.append(f"{key}={value}\n")
+
+    try:
+        with open(ENV_PATH, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+    except Exception as e:
+        pass
+
+
+def save_telegram_api_credentials(api_id: str, api_hash: str):
+    """TELEGRAM_API_ID va TELEGRAM_API_HASH ni .env ga avtomatik saqlaydi."""
+    update_env_variable("TELEGRAM_API_ID", api_id)
+    update_env_variable("TELEGRAM_API_HASH", api_hash)
+
+
+

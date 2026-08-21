@@ -159,11 +159,21 @@ def system_actions_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def cleaner_config_keyboard() -> InlineKeyboardMarkup:
+    """API sozlanmagan holatdagi klaviatura."""
+    buttons = [
+        [InlineKeyboardButton(text="⚙️ API_ID va API_HASH ni kiritish", callback_data="cl_set_api")],
+        [InlineKeyboardButton(text="📖 my.telegram.org Yo'riqnomasi", callback_data="cl_help_api")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 def cleaner_login_methods_keyboard() -> InlineKeyboardMarkup:
     """Telegram hisobga kirish usullari."""
     buttons = [
         [InlineKeyboardButton(text="📷 QR Kod orqali kirish (Tezkor va oson)", callback_data="cl_login_qr")],
         [InlineKeyboardButton(text="📱 Telefon raqam orqali kirish", callback_data="cl_login_phone")],
+        [InlineKeyboardButton(text="⚙️ API_ID va HASH ni kiritish / yangilash", callback_data="cl_set_api")],
         [InlineKeyboardButton(text="📖 my.telegram.org Yo'riqnomasi", callback_data="cl_help_api")],
         [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="cl_cancel")],
     ]
