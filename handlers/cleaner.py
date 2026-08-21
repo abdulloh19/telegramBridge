@@ -109,20 +109,20 @@ async def handle_phone_input(message: Message, state: FSMContext):
     status_msg = await message.answer("⏳ Tasdiqlash kodi yuborilmoqda...")
 
     try:
-        await AccountCleanerService.send_auth_code(user_id, phone)
+        _, delivery_info = await AccountCleanerService.send_auth_code(user_id, phone)
         await state.update_data(phone=phone)
         await state.set_state(CleanerStates.waiting_for_code)
         await status_msg.edit_text(
-            f"📩 <b>{escape_html(phone)}</b> raqamiga Telegram orqali tasdiqlash kodi yuborildi!\n\n"
-            "Iltimos, Telegramdan kelgan kodni yuboring (masalan: <code>12345</code>):\n\n"
-            "<i>Bekor qilish uchun /cancel yuboring.</i>",
+            f"📱 <b>Raqam:</b> <code>{escape_html(phone)}</code>\n\n"
+            f"{delivery_info}\n\n"
+            f"<i>Tasdiqlash kodini shu yerga yozib yuboring (Bekor qilish: /cancel):</i>",
             parse_mode="HTML"
         )
     except Exception as e:
         logger.error(f"Kod yuborishda xatolik: {e}")
         await status_msg.edit_text(
             f"❌ <b>Kod yuborishda xatolik:</b> {escape_html(str(e))}\n\n"
-            "Telefon raqamni to'g'ri kiritganingizni va Telegram ilovangizni tekshiring.",
+            "Telefon raqamni to'g'ri kiritganingizni tekshiring.",
             parse_mode="HTML"
         )
 

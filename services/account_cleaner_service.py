@@ -164,8 +164,8 @@ class AccountCleanerService:
             return False
 
     @staticmethod
-    async def send_auth_code(user_id: int, phone: str) -> str:
-        """Telefon raqamga Telegram tasdiqlash kodini yuboradi."""
+    async def send_auth_code(user_id: int, phone: str) -> tuple[str, str]:
+        """Telefon raqamga Telegram tasdiqlash kodini yuboradi va kod qayerga yuborilgani haqida ma'lumot beradi."""
         from telethon.errors import (
             FloodWaitError,
             PhoneNumberInvalidError,
@@ -186,10 +186,25 @@ class AccountCleanerService:
                     )
                 raise conn_err
 
+        def _get_delivery_info(sent_type) -> str:
+            type_name = type(sent_type).__name__.lower()
+            if "app" in type_name:
+                return (
+                    "📲 <b>Kod Telegram ilovangiz ichidagi rasmiy «Telegram» (Service Notifications) chatiga yuborildi!</b>\n\n"
+                    "⚠️ <i>Diqqat: Kod oddiy SMS ga EMAS, aynan Telegram ilovangiz ichiga keldi.</i>\n"
+                    "Telegram ilovasidagi chatlar ro'yxatidan <b>Telegram</b> chatini oching va 5 xonali kodni oling."
+                )
+            elif "sms" in type_name:
+                return "📩 <b>Kod telefoningizga oddiy SMS xabar orqali yuborildi.</b>"
+            elif "call" in type_name:
+                return "📞 <b>Telegram telefoningizga qo'ng'iroq qilib kodni aytadi.</b>"
+            return "📩 <b>Kod Telegram orqali yuborildi (Telegram chatini yoki SMS ni tekshiring).</b>"
+
         try:
             result = await client.send_code_request(phone)
             AccountCleanerService._phone_hashes[user_id] = result.phone_code_hash
-            return result.phone_code_hash
+            delivery_text = _get_delivery_info(result.type)
+            return result.phone_code_hash, delivery_text
         except FloodWaitError as e:
             time_str = format_seconds(e.seconds)
             raise RuntimeError(
@@ -212,7 +227,8 @@ class AccountCleanerService:
                 await client.connect()
                 result = await client.send_code_request(phone)
                 AccountCleanerService._phone_hashes[user_id] = result.phone_code_hash
-                return result.phone_code_hash
+                delivery_text = _get_delivery_info(result.type)
+                return result.phone_code_hash, delivery_text
             except FloodWaitError as fe:
                 time_str = format_seconds(fe.seconds)
                 raise RuntimeError(f"Telegram cheklovi (FloodWait)! Iltimos, {time_str} kuting.")
