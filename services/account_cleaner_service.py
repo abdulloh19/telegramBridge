@@ -164,19 +164,37 @@ class AccountCleanerService:
             return False
 
     @staticmethod
+    async def reset_unauthorized_session(user_id: int):
+        """Agar sessiya to'liq kirmagan yoki buzilgan bo'lsa, uni tozalab yangidan yaratadi."""
+        try:
+            if user_id in AccountCleanerService._clients:
+                client = AccountCleanerService._clients[user_id]
+                try:
+                    if client.is_connected():
+                        await client.disconnect()
+                except Exception:
+                    pass
+                AccountCleanerService._clients.pop(user_id, None)
+
+            AccountCleanerService._phone_hashes.pop(user_id, None)
+
+            session_file = SESSIONS_DIR / f"user_session_{user_id}.session"
+            if session_file.exists():
+                session_file.unlink(missing_ok=True)
+            journal_file = SESSIONS_DIR / f"user_session_{user_id}.session-journal"
+            if journal_file.exists():
+                journal_file.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning(f"Sessiyani tozalashda xatolik: {e}")
+
+    @staticmethod
     async def create_qr_login(user_id: int):
         """QR kod orqali kirishni boshlaydi va (qr_login_ob'ekti, qrcode_image_bytes) qaytaradi."""
         import qrcode
         import io
 
-        if user_id in AccountCleanerService._clients:
-            try:
-                old = AccountCleanerService._clients[user_id]
-                if old.is_connected():
-                    await old.disconnect()
-            except Exception:
-                pass
-            AccountCleanerService._clients.pop(user_id, None)
+        # Toza yangi sessiya bilan boshlash
+        await AccountCleanerService.reset_unauthorized_session(user_id)
 
         client = await AccountCleanerService.get_client(user_id)
         if not client.is_connected():
@@ -239,15 +257,9 @@ class AccountCleanerService:
             PhoneNumberBannedError,
         )
 
-        # Yangi urinish uchun eski nofaol ulanishni yangilash
-        if user_id in AccountCleanerService._clients:
-            try:
-                old = AccountCleanerService._clients[user_id]
-                if not await old.is_user_authorized():
-                    await old.disconnect()
-                    AccountCleanerService._clients.pop(user_id, None)
-            except Exception:
-                AccountCleanerService._clients.pop(user_id, None)
+        # Yangi urinish uchun eski nofaol ulanishni tozalash
+        if not await AccountCleanerService.is_authorized(user_id):
+            await AccountCleanerService.reset_unauthorized_session(user_id)
 
         client = await AccountCleanerService.get_client(user_id)
         if not client.is_connected():
