@@ -15,7 +15,7 @@ from aiogram.types import BotCommand
 
 from config import BOT_TOKEN, ADMIN_IDS, DEFAULT_WORKING_DIR
 from middlewares.auth import AuthMiddleware
-from handlers import start, files, terminal, system, ai_agent, cleaner
+from handlers import start, files, terminal, system, ai_agent, cleaner, media_downloader
 from utils.logger import logger
 from utils.helpers import escape_html
 
@@ -41,8 +41,7 @@ async def setup_bot_commands(bot: Bot):
         BotCommand(command="files", description="📁 Fayllar brauzeri"),
         BotCommand(command="sh", description="💻 Terminal buyrug'ini bajarish"),
         BotCommand(command="agent", description="🤖 Avtonom AI dasturchi"),
-        BotCommand(command="fix", description="🔧 Koddagi xatolikni tuzatish"),
-        BotCommand(command="explain", description="📖 Kodni tahlil qilish"),
+        BotCommand(command="dl", description="📥 Video yuklash (Private/Public)"),
         BotCommand(command="status", description="📊 Tizim holati (CPU, RAM, Disk)"),
         BotCommand(command="screenshot", description="📸 Kompyuter ekrani skrinshoti"),
         BotCommand(command="cleaner", description="🧹 Telegram hisobni tozalash"),
@@ -123,6 +122,7 @@ async def main():
     dp.include_router(system.router)
     dp.include_router(ai_agent.router)
     dp.include_router(cleaner.router)
+    dp.include_router(media_downloader.router)
 
 
     # Buyruqlar menyusi va xabarnoma

@@ -17,7 +17,10 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
             KeyboardButton(text="🧹 Hisobni Tozalash"),
         ],
         [
+            KeyboardButton(text="📥 Video Yuklash"),
             KeyboardButton(text="⚡ Git Status"),
+        ],
+        [
             KeyboardButton(text="⚙️ Sozlamalar / Yordam"),
         ]
     ]

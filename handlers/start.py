@@ -75,7 +75,11 @@ async def cmd_help(message: Message, state: FSMContext):
         "• <code>/clean_deleted</code> — O'chib ketgan ('Deleted Account') chatlarni tozalash\n"
         "• <code>/clean_channels [kun]</code> — Nofaol (standart 60 kun) kanallar va guruhlardan chiqish\n"
         "• <code>/clean_old [kun]</code> — Eski (standart 90 kun, masalan: <code>/clean_old 30</code>) yozishmalarni tozalash\n"
-        "• <code>/cleaner_logout</code> — Telethon hisobidan chiqish"
+        "• <code>/set_api</code> — Telegram API_ID va API_HASH ni kiritish\n"
+        "• <code>/cleaner_logout</code> — Telethon hisobidan chiqish\n\n"
+        "📥 <b>Telegram Media / Video Yuklovchi:</b>\n"
+        "• <code>/dl &lt;link&gt;</code> — Yopiq (Private) yoki ommaviy kanaldan video yuklab olish (masalan: <code>/dl https://t.me/c/1234567890/45</code>)\n"
+        "• <code>📥 Video Yuklash</code> — Interaktiv video yuklash menyusi"
     )
     await message.answer(help_text, parse_mode="HTML")
 

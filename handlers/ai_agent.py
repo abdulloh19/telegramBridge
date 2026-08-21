@@ -20,6 +20,7 @@ MAIN_MENU_BUTTONS = {
     "📊 Tizim Holati",
     "📸 Skrinshot",
     "🧹 Hisobni Tozalash",
+    "📥 Video Yuklash",
     "⚡ Git Status",
     "⚙️ Sozlamalar / Yordam",
 }
