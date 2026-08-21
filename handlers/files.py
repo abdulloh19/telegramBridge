@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, FSInputFile, BufferedInputFile
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from config import get_user_cwd, set_user_cwd
@@ -28,9 +28,9 @@ class FileStates(StatesGroup):
     waiting_for_search_query = State()
 
 
-@router.message(Command("ls"))
-@router.message(Command("files"))
-@router.message(F.text == "📁 Fayllar")
+@router.message(Command("ls"), StateFilter("*"))
+@router.message(Command("files"), StateFilter("*"))
+@router.message(F.text == "📁 Fayllar", StateFilter("*"))
 async def show_file_browser(message: Message, state: FSMContext):
     """Fayllar brauzerini ochish."""
     await state.clear()

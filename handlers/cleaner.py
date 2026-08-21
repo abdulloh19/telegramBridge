@@ -1,6 +1,6 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from services.account_cleaner_service import AccountCleanerService
@@ -10,7 +10,7 @@ from utils.logger import logger
 
 router = Router()
 
-# Keshda topilgan elementlarni saqlash
+# Keshda topilgan elementlarni saqlash (chat_id -> list of ids)
 _SCANNED_CHANNELS: dict[int, list[int]] = {}
 _SCANNED_OLD_DIALOGS: dict[int, list[int]] = {}
 
@@ -21,8 +21,8 @@ class CleanerStates(StatesGroup):
     waiting_for_2fa = State()
 
 
-@router.message(Command("cleaner"))
-@router.message(F.text == "🧹 Hisobni Tozalash")
+@router.message(Command("cleaner"), StateFilter("*"))
+@router.message(F.text == "🧹 Hisobni Tozalash", StateFilter("*"))
 async def cmd_cleaner_menu(message: Message, state: FSMContext):
     """Telegram hisobini tozalash asosiy menyusi."""
     await state.clear()
@@ -56,7 +56,10 @@ async def cmd_cleaner_menu(message: Message, state: FSMContext):
     text = (
         "🧹 <b>Telegram Hisobni Tozalash Menejeri</b>\n\n"
         "🟢 <b>Hisobingiz muvaffaqiyatli ulangan!</b>\n\n"
-        "Quyidagi tozalash amallaridan birini tanlang:"
+        "Quyidagi tozalash amallaridan birini tanlang:\n"
+        "• <code>/clean_deleted</code> — O'chgan hisoblarni tozalash\n"
+        "• <code>/clean_channels [kun]</code> — Nofaol kanallardan chiqish (masalan: <code>/clean_channels 60</code>)\n"
+        "• <code>/clean_old [kun]</code> — Eski dialoglarni tozalash (masalan: <code>/clean_old 90</code> yoki <code>/clean_old 30</code>)"
     )
     await message.answer(text, parse_mode="HTML", reply_markup=cleaner_main_keyboard(is_auth=True))
 
@@ -88,13 +91,19 @@ async def cb_start_login(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.answer(
         "📱 <b>Telegram hisobingiz telefon raqamini xalqaro formatda yuboring:</b>\n"
-        "Masalan: <code>+998901234567</code>",
+        "Masalan: <code>+998901234567</code>\n\n"
+        "<i>Bekor qilish uchun /cancel yuboring.</i>",
         parse_mode="HTML"
     )
 
 
 @router.message(CleanerStates.waiting_for_phone)
 async def handle_phone_input(message: Message, state: FSMContext):
+    if message.text.strip().startswith("/cancel"):
+        await state.clear()
+        await message.answer("❌ Kirish jarayoni bekor qilindi.")
+        return
+
     phone = message.text.strip().replace(" ", "")
     user_id = message.from_user.id
     status_msg = await message.answer("⏳ Tasdiqlash kodi yuborilmoqda...")
@@ -105,19 +114,30 @@ async def handle_phone_input(message: Message, state: FSMContext):
         await state.set_state(CleanerStates.waiting_for_code)
         await status_msg.edit_text(
             f"📩 <b>{escape_html(phone)}</b> raqamiga Telegram orqali tasdiqlash kodi yuborildi!\n\n"
-            "Iltimos, kelgan kodni yuboring (masalan: <code>12345</code>):",
+            "Iltimos, Telegramdan kelgan kodni yuboring (masalan: <code>12345</code>):\n\n"
+            "<i>Bekor qilish uchun /cancel yuboring.</i>",
             parse_mode="HTML"
         )
     except Exception as e:
-        await status_msg.edit_text(f"❌ Kod yuborishda xatolik: {str(e)}")
+        logger.error(f"Kod yuborishda xatolik: {e}")
+        await status_msg.edit_text(
+            f"❌ <b>Kod yuborishda xatolik:</b> {escape_html(str(e))}\n\n"
+            "Telefon raqamni to'g'ri kiritganingizni va Telegram ilovangizni tekshiring.",
+            parse_mode="HTML"
+        )
 
 
 @router.message(CleanerStates.waiting_for_code)
 async def handle_code_input(message: Message, state: FSMContext):
-    code = message.text.strip().replace(" ", "")
+    if message.text.strip().startswith("/cancel"):
+        await state.clear()
+        await message.answer("❌ Kirish jarayoni bekor qilindi.")
+        return
+
+    code = message.text.strip().replace(" ", "").replace("-", "")
     user_id = message.from_user.id
     data = await state.get_data()
-    phone = data.get("phone")
+    phone = data.get("phone", "")
 
     status_msg = await message.answer("⏳ Kirish tekshirilmoqda...")
 
@@ -127,7 +147,8 @@ async def handle_code_input(message: Message, state: FSMContext):
             await state.update_data(code=code)
             await state.set_state(CleanerStates.waiting_for_2fa)
             await status_msg.edit_text(
-                "🔒 <b>Ikki bosqichli autentifikatsiya (2FA) parolingizni kiriting:</b>",
+                "🔒 <b>Ikki bosqichli autentifikatsiya (2FA) parolingizni kiriting:</b>\n\n"
+                "<i>Bekor qilish uchun /cancel yuboring.</i>",
                 parse_mode="HTML"
             )
             return
@@ -139,18 +160,24 @@ async def handle_code_input(message: Message, state: FSMContext):
                 reply_markup=cleaner_main_keyboard(is_auth=True)
             )
         else:
-            await status_msg.edit_text(f"❌ {res}")
+            await status_msg.edit_text(f"{res}")
     except Exception as e:
-        await status_msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}")
+        logger.error(f"Kod tekshirishda xatolik: {e}")
+        await status_msg.edit_text(f"❌ Xatolik yuz berdi: {escape_html(str(e))}")
 
 
 @router.message(CleanerStates.waiting_for_2fa)
 async def handle_2fa_input(message: Message, state: FSMContext):
+    if message.text.strip().startswith("/cancel"):
+        await state.clear()
+        await message.answer("❌ Kirish jarayoni bekor qilindi.")
+        return
+
     password = message.text.strip()
     user_id = message.from_user.id
     data = await state.get_data()
-    phone = data.get("phone")
-    code = data.get("code")
+    phone = data.get("phone", "")
+    code = data.get("code", "")
     await state.clear()
 
     status_msg = await message.answer("⏳ 2FA parol tekshirilmoqda...")
@@ -162,9 +189,10 @@ async def handle_2fa_input(message: Message, state: FSMContext):
                 reply_markup=cleaner_main_keyboard(is_auth=True)
             )
         else:
-            await status_msg.edit_text(f"❌ {res}")
+            await status_msg.edit_text(f"{res}")
     except Exception as e:
-        await status_msg.edit_text(f"❌ 2FA tekshirishda xatolik: {str(e)}")
+        logger.error(f"2FA tekshirishda xatolik: {e}")
+        await status_msg.edit_text(f"❌ 2FA tekshirishda xatolik: {escape_html(str(e))}")
 
 
 # ==========================================
@@ -172,16 +200,38 @@ async def handle_2fa_input(message: Message, state: FSMContext):
 # ==========================================
 
 @router.callback_query(F.data == "cl_scan_deleted")
-@router.message(Command("clean_deleted"))
-async def scan_deleted_accounts_flow(event: Message | CallbackQuery):
+@router.message(Command("clean_deleted"), StateFilter("*"))
+async def scan_deleted_accounts_flow(event: Message | CallbackQuery, state: FSMContext):
+    await state.clear()
     target = event if isinstance(event, Message) else event.message
     user_id = event.from_user.id
+
+    if not AccountCleanerService.is_configured():
+        await target.answer(
+            "⚠️ <b>.env faylida TELEGRAM_API_ID va TELEGRAM_API_HASH kiritilmagan!</b>",
+            parse_mode="HTML",
+            reply_markup=cleaner_main_keyboard(is_auth=False)
+        )
+        return
+
+    if not await AccountCleanerService.is_authorized(user_id):
+        await target.answer(
+            "🔑 <b>Avval Telegram hisobingizga kirishingiz kerak:</b>",
+            parse_mode="HTML",
+            reply_markup=cleaner_main_keyboard(is_auth=False)
+        )
+        return
+
     status_msg = await target.answer("🔍 Chatlar tekshirilmoqda ('Deleted Account' hisoblar qidirilmoqda)...")
 
     try:
         deleted = await AccountCleanerService.scan_deleted_accounts(user_id)
         if not deleted:
-            await status_msg.edit_text("✅ <b>Ajoyib!</b> Sizda birorta ham 'Deleted Account' chat topilmadi.", parse_mode="HTML")
+            await status_msg.edit_text(
+                "✅ <b>Ajoyib!</b> Sizda birorta ham 'Deleted Account' chat topilmadi.",
+                parse_mode="HTML",
+                reply_markup=cleaner_main_keyboard(is_auth=True)
+            )
             return
 
         text = (
@@ -191,7 +241,8 @@ async def scan_deleted_accounts_flow(event: Message | CallbackQuery):
         )
         await status_msg.edit_text(text, parse_mode="HTML", reply_markup=confirm_clean_keyboard("deleted", len(deleted)))
     except Exception as e:
-        await status_msg.edit_text(f"❌ Tekshirishda xatolik: {str(e)}")
+        logger.error(f"Deleted accounts tekshirishda xatolik: {e}")
+        await status_msg.edit_text(f"❌ Tekshirishda xatolik: {escape_html(str(e))}")
 
 
 @router.callback_query(F.data == "cl_do_deleted")
@@ -209,7 +260,8 @@ async def do_delete_deleted_accounts(callback: CallbackQuery):
             reply_markup=cleaner_main_keyboard(is_auth=True)
         )
     except Exception as e:
-        await status_msg.edit_text(f"❌ O'chirishda xatolik: {str(e)}")
+        logger.error(f"Deleted accounts o'chirishda xatolik: {e}")
+        await status_msg.edit_text(f"❌ O'chirishda xatolik: {escape_html(str(e))}")
 
 
 # ==========================================
@@ -217,16 +269,45 @@ async def do_delete_deleted_accounts(callback: CallbackQuery):
 # ==========================================
 
 @router.callback_query(F.data == "cl_scan_channels")
-@router.message(Command("clean_channels"))
-async def scan_inactive_channels_flow(event: Message | CallbackQuery):
+@router.message(Command("clean_channels"), StateFilter("*"))
+async def scan_inactive_channels_flow(event: Message | CallbackQuery, state: FSMContext):
+    await state.clear()
     target = event if isinstance(event, Message) else event.message
     user_id = event.from_user.id
-    status_msg = await target.answer("🔍 Kanallar va guruhlar tekshirilmoqda (60 kundan ortiq nofaol)...")
+
+    if not AccountCleanerService.is_configured():
+        await target.answer(
+            "⚠️ <b>.env faylida TELEGRAM_API_ID va TELEGRAM_API_HASH kiritilmagan!</b>",
+            parse_mode="HTML",
+            reply_markup=cleaner_main_keyboard(is_auth=False)
+        )
+        return
+
+    if not await AccountCleanerService.is_authorized(user_id):
+        await target.answer(
+            "🔑 <b>Avval Telegram hisobingizga kirishingiz kerak:</b>",
+            parse_mode="HTML",
+            reply_markup=cleaner_main_keyboard(is_auth=False)
+        )
+        return
+
+    # Foydalanuvchi /clean_channels 30 deb yozsa kunni olish
+    days = 60
+    if isinstance(event, Message) and event.text:
+        parts = event.text.strip().split()
+        if len(parts) > 1 and parts[1].isdigit():
+            days = max(1, int(parts[1]))
+
+    status_msg = await target.answer(f"🔍 Kanallar va guruhlar tekshirilmoqda ({days} kundan ortiq nofaol)...")
 
     try:
-        channels = await AccountCleanerService.scan_inactive_channels(user_id, days=60)
+        channels = await AccountCleanerService.scan_inactive_channels(user_id, days=days)
         if not channels:
-            await status_msg.edit_text("✅ <b>Sizda nofaol kanallar topilmadi!</b>", parse_mode="HTML")
+            await status_msg.edit_text(
+                f"✅ <b>Oxirgi {days} kunda nofaol kanallar topilmadi!</b>",
+                parse_mode="HTML",
+                reply_markup=cleaner_main_keyboard(is_auth=True)
+            )
             return
 
         chat_id = target.chat.id
@@ -241,13 +322,14 @@ async def scan_inactive_channels_flow(event: Message | CallbackQuery):
 
         text = (
             f"🚪 <b>Faol bo'lmagan kanallar va guruhlar:</b>\n\n"
-            f"Jami topildi: <b>{len(channels)}</b> ta (60+ kun faol bo'lmagan)\n\n"
+            f"Jami topildi: <b>{len(channels)}</b> ta ({days}+ kun faol bo'lmagan)\n\n"
             f"{list_preview}\n"
             f"Ushbu barcha kanallardan chiqib ketishni (Leave) xohlaysizmi?"
         )
         await status_msg.edit_text(text, parse_mode="HTML", reply_markup=confirm_clean_keyboard("channels", len(channels)))
     except Exception as e:
-        await status_msg.edit_text(f"❌ Tekshirishda xatolik: {str(e)}")
+        logger.error(f"Kanallarni tekshirishda xatolik: {e}")
+        await status_msg.edit_text(f"❌ Tekshirishda xatolik: {escape_html(str(e))}")
 
 
 @router.callback_query(F.data == "cl_do_channels")
@@ -273,24 +355,56 @@ async def do_leave_inactive_channels(callback: CallbackQuery):
             reply_markup=cleaner_main_keyboard(is_auth=True)
         )
     except Exception as e:
-        await status_msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}")
+        logger.error(f"Kanallardan chiqishda xatolik: {e}")
+        await status_msg.edit_text(f"❌ Xatolik yuz berdi: {escape_html(str(e))}")
 
 
 # ==========================================
-# 3. Eski dialoglar (Old Chats)
+# 3. Eski dialoglar (Old Chats / clean_old)
 # ==========================================
 
 @router.callback_query(F.data == "cl_scan_old")
-@router.message(Command("clean_old"))
-async def scan_old_dialogs_flow(event: Message | CallbackQuery):
+@router.message(Command("clean_old"), StateFilter("*"))
+async def scan_old_dialogs_flow(event: Message | CallbackQuery, state: FSMContext):
+    await state.clear()
     target = event if isinstance(event, Message) else event.message
     user_id = event.from_user.id
-    status_msg = await target.answer("🔍 Eski yozishmalar qidirilmoqda (90 kundan ortiq xabar yozilmagan)...")
+
+    if not AccountCleanerService.is_configured():
+        await target.answer(
+            "⚠️ <b>.env faylida TELEGRAM_API_ID va TELEGRAM_API_HASH kiritilmagan!</b>\n"
+            "Iltimos, avval API kalitlarini sozlang.",
+            parse_mode="HTML",
+            reply_markup=cleaner_main_keyboard(is_auth=False)
+        )
+        return
+
+    if not await AccountCleanerService.is_authorized(user_id):
+        await target.answer(
+            "🔑 <b>Avval Telegram hisobingizga kirishingiz kerak:</b>\n"
+            "Quyidagi tugma orqali login qiling.",
+            parse_mode="HTML",
+            reply_markup=cleaner_main_keyboard(is_auth=False)
+        )
+        return
+
+    # Foydalanuvchi /clean_old 30 yoki /clean_old 60 yozsa kunni olish (standart: 90 kun)
+    days = 90
+    if isinstance(event, Message) and event.text:
+        parts = event.text.strip().split()
+        if len(parts) > 1 and parts[1].isdigit():
+            days = max(1, int(parts[1]))
+
+    status_msg = await target.answer(f"🔍 Eski yozishmalar qidirilmoqda ({days} kundan ortiq xabar yozilmagan)...")
 
     try:
-        old_dialogs = await AccountCleanerService.scan_old_dialogs(user_id, days=90)
+        old_dialogs = await AccountCleanerService.scan_old_dialogs(user_id, days=days)
         if not old_dialogs:
-            await status_msg.edit_text("✅ <b>90 kundan eski bo'lgan keraksiz dialoglar topilmadi.</b>", parse_mode="HTML")
+            await status_msg.edit_text(
+                f"✅ <b>{days} kundan eski bo'lgan keraksiz dialoglar topilmadi.</b>",
+                parse_mode="HTML",
+                reply_markup=cleaner_main_keyboard(is_auth=True)
+            )
             return
 
         chat_id = target.chat.id
@@ -304,14 +418,16 @@ async def scan_old_dialogs_flow(event: Message | CallbackQuery):
             list_preview += f"... va yana {len(old_dialogs) - 10} ta dialog.\n"
 
         text = (
-            f"⏱️ <b>Eski Dialoglar (90+ kun oldingi):</b>\n\n"
+            f"⏱️ <b>Eski Dialoglar ({days}+ kun oldingi):</b>\n\n"
             f"Jami topildi: <b>{len(old_dialogs)}</b> ta yozishma.\n\n"
             f"{list_preview}\n"
+            f"<i>(Eslatma: 'Saqlangan xabarlar' va qadalgan chatlarga tegilmaydi)</i>\n\n"
             f"Ushbu eski dialoglarni tozalashni xohlaysizmi?"
         )
         await status_msg.edit_text(text, parse_mode="HTML", reply_markup=confirm_clean_keyboard("old", len(old_dialogs)))
     except Exception as e:
-        await status_msg.edit_text(f"❌ Tekshirishda xatolik: {str(e)}")
+        logger.error(f"Eski dialoglarni tekshirishda xatolik: {e}")
+        await status_msg.edit_text(f"❌ Tekshirishda xatolik: {escape_html(str(e))}")
 
 
 @router.callback_query(F.data == "cl_do_old")
@@ -337,11 +453,42 @@ async def do_delete_old_dialogs(callback: CallbackQuery):
             reply_markup=cleaner_main_keyboard(is_auth=True)
         )
     except Exception as e:
-        await status_msg.edit_text(f"❌ Xatolik: {str(e)}")
+        logger.error(f"Eski dialoglarni o'chirishda xatolik: {e}")
+        await status_msg.edit_text(f"❌ Xatolik: {escape_html(str(e))}")
+
+
+# ==========================================
+# 4. Sessiyadan chiqish (Logout)
+# ==========================================
+
+@router.callback_query(F.data == "cl_logout")
+@router.message(Command("cleaner_logout"), StateFilter("*"))
+async def cb_cleaner_logout(event: Message | CallbackQuery, state: FSMContext):
+    await state.clear()
+    target = event if isinstance(event, Message) else event.message
+    user_id = event.from_user.id
+
+    ok = await AccountCleanerService.logout(user_id)
+    if isinstance(event, CallbackQuery):
+        await event.answer("Hisobdan chiqildi")
+
+    if ok:
+        await target.answer(
+            "🚪 <b>Telegram hisobingizdan muvaffaqiyatli chiqildi.</b>\n\n"
+            "Sessiya fayllari o'chirildi. Qaytadan ishlatish uchun yana login qilishingiz mumkin.",
+            parse_mode="HTML",
+            reply_markup=cleaner_main_keyboard(is_auth=False)
+        )
+    else:
+        await target.answer(
+            "⚠️ Chiqishda xatolik yuz berdi yoki sessiya allaqachon tozalangan.",
+            reply_markup=cleaner_main_keyboard(is_auth=False)
+        )
 
 
 @router.callback_query(F.data == "cl_cancel")
-async def cb_cancel_cleaner(callback: CallbackQuery):
+async def cb_cancel_cleaner(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
     user_id = callback.from_user.id
     is_auth = await AccountCleanerService.is_authorized(user_id)
     await callback.answer("Amal bekor qilindi")
@@ -349,8 +496,13 @@ async def cb_cancel_cleaner(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "cl_refresh")
-async def cb_refresh_cleaner(callback: CallbackQuery):
+async def cb_refresh_cleaner(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
     user_id = callback.from_user.id
     await callback.answer("Yangilandi")
     is_auth = await AccountCleanerService.is_authorized(user_id)
-    await callback.message.edit_reply_markup(reply_markup=cleaner_main_keyboard(is_auth=is_auth))
+    try:
+        await callback.message.edit_reply_markup(reply_markup=cleaner_main_keyboard(is_auth=is_auth))
+    except Exception:
+        pass
+

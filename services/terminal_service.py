@@ -1,4 +1,5 @@
 import asyncio
+import locale
 import os
 import sys
 import time
@@ -9,13 +10,15 @@ from utils.logger import logger
 
 
 class TerminalService:
-    """PowerShell va CMD buyruqlarini asinxron xavfsiz bajarish xizmati."""
+    """PowerShell, CMD va Bash buyruqlarini asinxron xavfsiz bajarish xizmati."""
 
     @staticmethod
     def _build_command(command: str) -> list[str]:
         """Tizim turiga mos qobiq (shell) buyrug'ini tuzadi."""
         if sys.platform == "win32":
-            if SHELL_TYPE == "powershell":
+            if SHELL_TYPE == "cmd":
+                return ["cmd.exe", "/c", command]
+            else:
                 return [
                     "powershell.exe",
                     "-NoProfile",
@@ -23,10 +26,9 @@ class TerminalService:
                     "-ExecutionPolicy", "Bypass",
                     "-Command", command
                 ]
-            else:
-                return ["cmd.exe", "/c", command]
         else:
-            return ["/bin/bash", "-c", command]
+            shell = "/bin/bash" if os.path.exists("/bin/bash") else "/bin/sh"
+            return [shell, "-c", command]
 
     @staticmethod
     async def execute_command(
@@ -43,13 +45,47 @@ class TerminalService:
             "exit_code": int,
             "duration": float,
             "timed_out": bool,
-            "cwd": str
+            "cwd": str,
+            "changed_dir": Optional[str]
         }
         """
         timeout_sec = timeout or COMMAND_TIMEOUT
         working_dir = str(cwd) if cwd else os.getcwd()
-        cmd_args = TerminalService._build_command(command)
+        trimmed = command.strip()
 
+        # 1. 'cd' buyrug'ini dastur darajasida navigatsiya qilish
+        if trimmed == "cd" or trimmed.startswith("cd ") or trimmed == "cd.." or trimmed.startswith("cd..") or trimmed.startswith("cd/") or trimmed.startswith("cd\\"):
+            if trimmed == "cd":
+                target_dir = Path.home()
+            elif trimmed == "cd.." or trimmed.startswith("cd.."):
+                parent_dir = Path(working_dir).parent
+                target_dir = parent_dir
+            else:
+                raw_target = trimmed.split(maxsplit=1)[1].strip().strip('"').strip("'")
+                target_dir = (Path(working_dir) / raw_target).resolve()
+
+            if target_dir.exists() and target_dir.is_dir():
+                return {
+                    "stdout": f"📁 Joriy ishchi katalog o'zgartirildi:\n{target_dir}",
+                    "stderr": "",
+                    "exit_code": 0,
+                    "duration": 0.01,
+                    "timed_out": False,
+                    "cwd": str(target_dir),
+                    "changed_dir": str(target_dir),
+                }
+            else:
+                return {
+                    "stdout": "",
+                    "stderr": f"❌ Papka topilmadi: {target_dir}",
+                    "exit_code": 1,
+                    "duration": 0.01,
+                    "timed_out": False,
+                    "cwd": working_dir,
+                    "changed_dir": None,
+                }
+
+        cmd_args = TerminalService._build_command(command)
         start_time = time.time()
         logger.info(f"Terminal buyrug'i boshlandi [CWD: {working_dir}]: {command}")
 
@@ -69,7 +105,6 @@ class TerminalService:
                 )
                 duration = round(time.time() - start_time, 2)
 
-                # Windows kodirovkalarini xavfsiz ochish
                 stdout_str = TerminalService._decode_output(stdout_bytes)
                 stderr_str = TerminalService._decode_output(stderr_bytes)
 
@@ -78,14 +113,14 @@ class TerminalService:
                 return {
                     "stdout": stdout_str,
                     "stderr": stderr_str,
-                    "exit_code": process.returncode or 0,
+                    "exit_code": process.returncode if process.returncode is not None else 0,
                     "duration": duration,
                     "timed_out": False,
                     "cwd": working_dir,
+                    "changed_dir": None,
                 }
 
             except asyncio.TimeoutError:
-                # Jarayon belgilangan vaqt ichida tugamasa to'xtatish
                 try:
                     process.kill()
                     await process.wait()
@@ -102,9 +137,39 @@ class TerminalService:
                     "duration": duration,
                     "timed_out": True,
                     "cwd": working_dir,
+                    "changed_dir": None,
                 }
 
         except Exception as e:
+            # Agar PowerShell topilmasa yoki xatolik bo'lsa, CMD orqali qayta urinib ko'rish
+            if sys.platform == "win32" and SHELL_TYPE != "cmd":
+                try:
+                    logger.warning(f"PowerShell xatoligi ({e}), CMD orqali bajarilmoqda...")
+                    fallback_args = ["cmd.exe", "/c", command]
+                    process = await asyncio.create_subprocess_exec(
+                        *fallback_args,
+                        cwd=working_dir,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        creationflags=0x08000000
+                    )
+                    stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                        process.communicate(),
+                        timeout=float(timeout_sec)
+                    )
+                    duration = round(time.time() - start_time, 2)
+                    return {
+                        "stdout": TerminalService._decode_output(stdout_bytes),
+                        "stderr": TerminalService._decode_output(stderr_bytes),
+                        "exit_code": process.returncode or 0,
+                        "duration": duration,
+                        "timed_out": False,
+                        "cwd": working_dir,
+                        "changed_dir": None,
+                    }
+                except Exception as fallback_err:
+                    logger.error(f"Fallback CMD ham ishlamadi: {fallback_err}")
+
             duration = round(time.time() - start_time, 2)
             logger.error(f"Buyruqni bajarishda tizim xatosi: {e}")
             return {
@@ -114,18 +179,23 @@ class TerminalService:
                 "duration": duration,
                 "timed_out": False,
                 "cwd": working_dir,
+                "changed_dir": None,
             }
 
     @staticmethod
     def _decode_output(raw_bytes: bytes) -> str:
-        """Har xil terminal kodirovkalarini (UTF-8, CP1251, CP866, CP1252) xavfsiz dekod qiladi."""
+        """Har xil terminal kodirovkalarini (UTF-8, CP866, CP1251, CP1252, OS locale) xavfsiz dekod qiladi."""
         if not raw_bytes:
             return ""
 
-        for encoding in ["utf-8", "cp1251", "cp866", "cp1252", "latin-1"]:
+        pref_enc = locale.getpreferredencoding(False) or "utf-8"
+        encodings = ["utf-8", "cp866", "cp1251", pref_enc, "cp1252", "latin-1"]
+
+        for encoding in encodings:
             try:
                 return raw_bytes.decode(encoding)
-            except UnicodeDecodeError:
+            except (UnicodeDecodeError, LookupError):
                 continue
 
         return raw_bytes.decode("utf-8", errors="replace")
+

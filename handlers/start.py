@@ -1,18 +1,18 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, StateFilter
+from aiogram.fsm.context import FSMContext
 from keyboards.reply import get_main_reply_keyboard
-from keyboards.inline import quick_terminal_keyboard, system_actions_keyboard
-from config import get_user_cwd, DEFAULT_WORKING_DIR
-from services.system_service import SystemService
+from config import get_user_cwd
 from utils.helpers import escape_html
 
 router = Router()
 
 
-@router.message(CommandStart())
-async def cmd_start(message: Message):
+@router.message(CommandStart(), StateFilter("*"))
+async def cmd_start(message: Message, state: FSMContext):
     """Bot boshlang'ich salomlashuv xabari."""
+    await state.clear()
     user_id = message.from_user.id
     cwd = get_user_cwd(user_id)
 
@@ -23,14 +23,13 @@ async def cmd_start(message: Message):
         f"📂 <b>Joriy ishchi papka:</b>\n<code>{escape_html(str(cwd))}</code>\n\n"
         "✨ <b>Asosiy Imkoniyatlar:</b>\n"
         "• 📁 <b>Fayllar Menejeri:</b> Fayllarni ko'rish, tahrirlash, yaratish, yuklab olish\n"
-        "• 💻 <b>Terminal:</b> PowerShell/CMD buyruqlarini masofadan bajarish\n"
+        "• 💻 <b>Terminal:</b> PowerShell/CMD buyruqlarini masofadan bajarish (/sh yoki 💻 Terminal)\n"
         "• 🤖 <b>AI Agent:</b> Koddagi xatolarni tuzatish (/fix), avtonom kod yozish (/agent)\n"
         "• 📊 <b>Monitoring:</b> CPU, RAM, Disk, Batareya va Uptime\n"
         "• 📸 <b>Skrinshot:</b> Kompyuter ekranining ayni damdagi rasmini olish\n"
-        "• 🧹 <b>Hisobni Tozalash:</b> 'Deleted Account' chatlar, nofaol kanallardan chiqish va eski dialoglarni tozalash (/cleaner)\n\n"
+        "• 🧹 <b>Hisobni Tozalash:</b> 'Deleted Account' chatlar, nofaol kanallardan chiqish va eski dialoglarni tozalash (/cleaner, /clean_old)\n\n"
         "<i>Quyidagi tezkor tugmalardan foydalanishingiz yoki /help yozishingiz mumkin.</i>"
     )
-
 
     await message.answer(
         welcome_text,
@@ -39,9 +38,10 @@ async def cmd_start(message: Message):
     )
 
 
-@router.message(Command("help"))
-async def cmd_help(message: Message):
+@router.message(Command("help"), StateFilter("*"))
+async def cmd_help(message: Message, state: FSMContext):
     """Barcha mavjud buyruqlar va qo'llanma."""
+    await state.clear()
     help_text = (
         "📖 <b>Telegram Dev Bridge — Buyruqlar Qo'llanmasi</b>\n\n"
         "📁 <b>Fayl Boshqaruvi:</b>\n"
@@ -53,11 +53,10 @@ async def cmd_help(message: Message):
         "• <code>/mkdir &lt;papka&gt;</code> — Yangi papka ochish\n"
         "• <code>/rm &lt;yo'l&gt;</code> — Fayl yoki papkani o'chirish\n"
         "• <code>/download &lt;fayl&gt;</code> — Faylni kompyuterdan telefonga yuklab olish\n"
-        "• <code>/search &lt;kod&gt;</code> — Loyiha ichidan matn/kod qidirish\n"
-        "• <i>(Telegramga istalgan fayl yuborsangiz, kompyuteringizga saqlanadi)</i>\n\n"
+        "• <code>/search &lt;kod&gt;</code> — Loyiha ichidan matn/kod qidirish\n\n"
         "💻 <b>Terminal va Shell:</b>\n"
-        "• <code>/sh &lt;buyruq&gt;</code> — Terminal buyrug'ini bajarish (masalan: <code>/sh git status</code>)\n"
-        "• <code>/cmd &lt;buyruq&gt;</code> yoki <code>/ps &lt;buyruq&gt;</code>\n\n"
+        "• <code>/sh &lt;buyruq&gt;</code> — Terminal buyrug'ini bajarish (masalan: <code>/sh dir</code> yoki <code>/sh git status</code>)\n"
+        "• <code>/terminal</code> yoki <code>💻 Terminal</code> tugmasi — Interaktiv terminal rejimi\n\n"
         "🤖 <b>Sun'iy Intellekt (AI Agent):</b>\n"
         "• <code>/agent &lt;vazifa&gt;</code> — Avtonom AI agentiga vazifa berish\n"
         "• <code>/fix &lt;fayl&gt; &lt;muammo&gt;</code> — Fayldagi xatolikni avtomatik tuzatish\n"
@@ -73,17 +72,17 @@ async def cmd_help(message: Message):
         "• <code>/notify &lt;xabar&gt;</code> — Windows ekranida bildirishnoma chiqarish\n\n"
         "🧹 <b>Telegram Hisobni Tozalash (Account Cleaner):</b>\n"
         "• <code>/cleaner</code> — Tozalash boshqaruv panelini ochish\n"
-        "• <code>/clean_deleted</code> — O'chib ketgan ('Deleted Account') hisoblar bilan chatlarni o'chirish\n"
-        "• <code>/clean_channels</code> — Nofaol (60+ kun) kanallar va guruhlardan chiqish\n"
-        "• <code>/clean_old</code> — 90 kundan eski bo'lgan yozishmalarni tozalash"
+        "• <code>/clean_deleted</code> — O'chib ketgan ('Deleted Account') chatlarni tozalash\n"
+        "• <code>/clean_channels [kun]</code> — Nofaol (standart 60 kun) kanallar va guruhlardan chiqish\n"
+        "• <code>/clean_old [kun]</code> — Eski (standart 90 kun, masalan: <code>/clean_old 30</code>) yozishmalarni tozalash\n"
+        "• <code>/cleaner_logout</code> — Telethon hisobidan chiqish"
     )
     await message.answer(help_text, parse_mode="HTML")
 
 
-
-@router.message(F.text == "⚙️ Sozlamalar / Yordam")
-async def btn_settings_help(message: Message):
-    await cmd_help(message)
+@router.message(F.text == "⚙️ Sozlamalar / Yordam", StateFilter("*"))
+async def btn_settings_help(message: Message, state: FSMContext):
+    await cmd_help(message, state)
 
 
 @router.callback_query(F.data == "noop")

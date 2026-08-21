@@ -19,6 +19,9 @@ ENV/
 terminal_output.txt
 screenshot*.jpg
 screenshot*.png
+sessions/
+*.session
+*.session-journal
 
 # IDE & OS
 .idea/

@@ -1,4 +1,5 @@
 import asyncio
+import shutil
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -60,9 +61,41 @@ class AccountCleanerService:
             return False
 
     @staticmethod
+    async def logout(user_id: int) -> bool:
+        """Foydalanuvchi sessiyasini uzadi va sessiya fayllarini tozalaydi."""
+        try:
+            if user_id in AccountCleanerService._clients:
+                client = AccountCleanerService._clients[user_id]
+                try:
+                    if client.is_connected():
+                        await client.log_out()
+                except Exception:
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
+                AccountCleanerService._clients.pop(user_id, None)
+
+            AccountCleanerService._phone_hashes.pop(user_id, None)
+
+            session_file = SESSIONS_DIR / f"user_session_{user_id}.session"
+            if session_file.exists():
+                session_file.unlink(missing_ok=True)
+            journal_file = SESSIONS_DIR / f"user_session_{user_id}.session-journal"
+            if journal_file.exists():
+                journal_file.unlink(missing_ok=True)
+
+            return True
+        except Exception as e:
+            logger.error(f"Sessiyadan chiqishda xatolik ({user_id}): {e}")
+            return False
+
+    @staticmethod
     async def send_auth_code(user_id: int, phone: str) -> str:
         """Telefon raqamga Telegram tasdiqlash kodini yuboradi."""
         client = await AccountCleanerService.get_client(user_id)
+        if not client.is_connected():
+            await client.connect()
         result = await client.send_code_request(phone)
         AccountCleanerService._phone_hashes[user_id] = result.phone_code_hash
         return result.phone_code_hash
@@ -71,19 +104,44 @@ class AccountCleanerService:
     async def complete_sign_in(user_id: int, phone: str, code: str, password: Optional[str] = None) -> tuple[bool, str]:
         """Tasdiqlash kodi va (agar bor bo'lsa 2FA parol) orqali tizimga kirish."""
         client = await AccountCleanerService.get_client(user_id)
-        from telethon.errors import SessionPasswordNeededError
+        if not client.is_connected():
+            await client.connect()
 
-        phone_code_hash = AccountCleanerService._phone_hashes.get(user_id)
+        from telethon.errors import (
+            SessionPasswordNeededError,
+            PhoneCodeInvalidError,
+            PhoneCodeExpiredError,
+            PasswordHashInvalidError
+        )
+
         try:
+            # Agar 2FA parol yuborilgan bo'lsa, kodni qayta kiritmasdan to'g'ridan-to'g'ri parol orqali kiriladi
+            if password:
+                try:
+                    await client.sign_in(password=password)
+                    me = await client.get_me()
+                    first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
+                    username = f"@{me.username}" if getattr(me, 'username', None) else f"ID: {me.id}"
+                    return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
+                except PasswordHashInvalidError:
+                    return False, "❌ 2FA paroli noto'g'ri kiritildi!"
+                except Exception as err:
+                    return False, f"2FA bilan kirishda xatolik: {str(err)}"
+
+            # 1-bosqich: Telefon raqam va kod orqali kirish
+            phone_code_hash = AccountCleanerService._phone_hashes.get(user_id)
             await client.sign_in(phone=phone, code=code, phone_code_hash=phone_code_hash)
             me = await client.get_me()
-            return True, f"✅ Muvaffaqiyatli ulandi: {me.first_name} (@{me.username or me.id})"
+            first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
+            username = f"@{me.username}" if getattr(me, 'username', None) else f"ID: {me.id}"
+            return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
+
         except SessionPasswordNeededError:
-            if not password:
-                return False, "2FA_REQUIRED"
-            await client.sign_in(password=password)
-            me = await client.get_me()
-            return True, f"✅ Muvaffaqiyatli ulandi: {me.first_name} (@{me.username or me.id})"
+            return False, "2FA_REQUIRED"
+        except PhoneCodeInvalidError:
+            return False, "❌ Tasdiqlash kodi noto'g'ri kiritildi!"
+        except PhoneCodeExpiredError:
+            return False, "❌ Tasdiqlash kodi muddati o'tgan! Iltimos, qaytadan kod so'rang."
         except Exception as e:
             return False, f"Kirishda xatolik: {str(e)}"
 
@@ -95,9 +153,17 @@ class AccountCleanerService:
 
         dialogs = await client.get_dialogs()
         for d in dialogs:
-            if d.is_user:
+            if d.is_user and d.entity:
                 entity = d.entity
-                if getattr(entity, 'deleted', False) or (entity.first_name and "deleted account" in entity.first_name.lower()):
+                is_self = getattr(entity, 'is_self', False) or getattr(entity, 'self', False)
+                if is_self or d.id == 777000 or getattr(entity, 'support', False):
+                    continue
+
+                is_deleted = getattr(entity, 'deleted', False)
+                first_name = (getattr(entity, 'first_name', '') or '').lower()
+                dialog_name = (d.name or '').lower()
+
+                if is_deleted or "deleted account" in first_name or "deleted account" in dialog_name:
                     deleted_dialogs.append({
                         "id": d.id,
                         "title": d.name or "Deleted Account",
@@ -115,7 +181,7 @@ class AccountCleanerService:
 
         for item in deleted_list:
             try:
-                await client.delete_dialog(item["id"])
+                await client.delete_dialog(item["id"], revoke=False)
                 count += 1
                 await asyncio.sleep(0.3)  # Telegram Flood limitidan saqlanish
             except Exception as e:
@@ -137,15 +203,16 @@ class AccountCleanerService:
                 if dialog_date and dialog_date.tzinfo is None:
                     dialog_date = dialog_date.replace(tzinfo=timezone.utc)
 
-                if dialog_date and dialog_date < cutoff_date:
-                    days_ago = (datetime.now(timezone.utc) - dialog_date).days
+                if dialog_date is None or dialog_date < cutoff_date:
+                    days_ago = (datetime.now(timezone.utc) - dialog_date).days if dialog_date else "Noma'lum"
+                    last_active = dialog_date.strftime("%Y-%m-%d") if dialog_date else "Xabar yo'q"
                     inactive_list.append({
                         "id": d.id,
-                        "title": d.name,
+                        "title": d.name or "Noma'lum kanal/guruh",
                         "is_channel": d.is_channel,
                         "is_group": d.is_group,
                         "days_ago": days_ago,
-                        "last_active": dialog_date.strftime("%Y-%m-%d"),
+                        "last_active": last_active,
                     })
 
         return inactive_list
@@ -160,7 +227,7 @@ class AccountCleanerService:
             try:
                 await client.delete_dialog(ch_id)
                 left_count += 1
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.4)
             except Exception as e:
                 logger.warning(f"Kanal/guruhdan chiqishda xatolik ({ch_id}): {e}")
 
@@ -175,18 +242,35 @@ class AccountCleanerService:
 
         dialogs = await client.get_dialogs()
         for d in dialogs:
-            if d.is_user:
+            if d.is_user and d.entity:
+                entity = d.entity
+                is_self = getattr(entity, 'is_self', False) or getattr(entity, 'self', False)
+                # Saqlangan xabarlar (Saved Messages), Telegram rasmiy xabarlari (777000) va qadalgan chatlarni o'tkazib yuborish
+                if is_self or d.id == 777000 or getattr(entity, 'support', False) or getattr(entity, 'verified', False):
+                    continue
+                if getattr(d, 'pinned', False):
+                    continue
+
                 dialog_date = d.date
                 if dialog_date and dialog_date.tzinfo is None:
                     dialog_date = dialog_date.replace(tzinfo=timezone.utc)
 
-                if dialog_date and dialog_date < cutoff_date:
+                if dialog_date is not None and dialog_date < cutoff_date:
                     days_ago = (datetime.now(timezone.utc) - dialog_date).days
+                    title = d.name or getattr(entity, 'first_name', '') or 'Foydalanuvchi'
                     old_dialogs.append({
                         "id": d.id,
-                        "title": d.name,
+                        "title": title,
                         "days_ago": days_ago,
                         "last_active": dialog_date.strftime("%Y-%m-%d"),
+                    })
+                elif dialog_date is None:
+                    title = d.name or getattr(entity, 'first_name', '') or 'Bo\'sh chat'
+                    old_dialogs.append({
+                        "id": d.id,
+                        "title": title,
+                        "days_ago": "Noma'lum",
+                        "last_active": "Xabar yo'q",
                     })
 
         return old_dialogs
@@ -199,9 +283,9 @@ class AccountCleanerService:
 
         for d_id in dialog_ids:
             try:
-                await client.delete_dialog(d_id)
+                await client.delete_dialog(d_id, revoke=False)
                 deleted_count += 1
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.3)
             except Exception as e:
                 logger.warning(f"Dialogni o'chirishda xatolik ({d_id}): {e}")
 

@@ -160,7 +160,6 @@ def system_actions_keyboard() -> InlineKeyboardMarkup:
 
 
 def cleaner_main_keyboard(is_auth: bool = True) -> InlineKeyboardMarkup:
-
     """Telegram hisobni tozalash asosiy inline menyusi."""
     if not is_auth:
         buttons = [
@@ -180,7 +179,8 @@ def cleaner_main_keyboard(is_auth: bool = True) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="⏱️ Eski Dialoglar (Old Chats)", callback_data="cl_scan_old"),
         ],
         [
-            InlineKeyboardButton(text="🔄 Holatni Yangilash", callback_data="cl_refresh"),
+            InlineKeyboardButton(text="🔄 Yangilash", callback_data="cl_refresh"),
+            InlineKeyboardButton(text="🚪 Chiqish (Logout)", callback_data="cl_logout"),
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)

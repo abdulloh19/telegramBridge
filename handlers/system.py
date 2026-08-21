@@ -1,7 +1,8 @@
 import io
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
 from services.system_service import SystemService
 from keyboards.inline import system_actions_keyboard
 from utils.helpers import escape_html
@@ -45,20 +46,22 @@ def _format_status_text(info: dict) -> str:
     )
 
 
-@router.message(Command("status"))
-@router.message(Command("sysinfo"))
-@router.message(F.text == "📊 Tizim Holati")
-async def cmd_system_status(message: Message):
+@router.message(Command("status"), StateFilter("*"))
+@router.message(Command("sysinfo"), StateFilter("*"))
+@router.message(F.text == "📊 Tizim Holati", StateFilter("*"))
+async def cmd_system_status(message: Message, state: FSMContext):
     """Tizim holatini ko'rish."""
+    await state.clear()
     info = SystemService.get_system_summary()
     text = _format_status_text(info)
     await message.answer(text, parse_mode="HTML", reply_markup=system_actions_keyboard())
 
 
-@router.message(Command("screenshot"))
-@router.message(F.text == "📸 Skrinshot")
-async def cmd_screenshot(message: Message):
+@router.message(Command("screenshot"), StateFilter("*"))
+@router.message(F.text == "📸 Skrinshot", StateFilter("*"))
+async def cmd_screenshot(message: Message, state: FSMContext):
     """Kompyuter monitoridan skrinshot olish va yuborish."""
+    await state.clear()
     status_msg = await message.answer("📸 Skrinshot olinmoqda...")
     try:
         image_stream = SystemService.capture_screenshot()
@@ -70,9 +73,10 @@ async def cmd_screenshot(message: Message):
         await status_msg.edit_text(f"❌ Skrinshot olishda xatolik: {str(e)}")
 
 
-@router.message(Command("processes"))
-async def cmd_processes(message: Message):
+@router.message(Command("processes"), StateFilter("*"))
+async def cmd_processes(message: Message, state: FSMContext):
     """Jarayonlar ro'yxatini ko'rish."""
+    await state.clear()
     procs = SystemService.get_top_processes(limit=10, sort_by="memory")
     text_lines = ["📋 <b>Eng ko'p xotira (RAM) sarflayotgan jarayonlar:</b>\n"]
     for p in procs:

@@ -1,7 +1,7 @@
 from pathlib import Path
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from config import get_user_cwd
@@ -13,6 +13,17 @@ from utils.logger import logger
 
 router = Router()
 
+MAIN_MENU_BUTTONS = {
+    "📁 Fayllar",
+    "💻 Terminal",
+    "🤖 AI Agent",
+    "📊 Tizim Holati",
+    "📸 Skrinshot",
+    "🧹 Hisobni Tozalash",
+    "⚡ Git Status",
+    "⚙️ Sozlamalar / Yordam",
+}
+
 
 class AIStates(StatesGroup):
     waiting_for_agent_instruction = State()
@@ -20,9 +31,10 @@ class AIStates(StatesGroup):
     waiting_for_fix_details = State()
 
 
-@router.message(Command("agent"))
+@router.message(Command("agent"), StateFilter("*"))
 async def cmd_ai_agent(message: Message, state: FSMContext):
     """Avtonom AI Coding Agent buyrug'i."""
+    await state.clear()
     user_id = message.from_user.id
     cwd = get_user_cwd(user_id)
     args = message.text.split(maxsplit=1)
@@ -34,7 +46,8 @@ async def cmd_ai_agent(message: Message, state: FSMContext):
             f"🤖 <b>Avtonom AI Coding Agent</b>\n\n"
             f"Agent loyihangizdagi fayllarni mustaqil o'qishi, tahrirlashi, yangi fayllar yaratishi va terminal buyruqlarini bajarishi mumkin.\n\n"
             f"📍 <b>Ishchi papka:</b> <code>{escape_html(str(cwd))}</code>\n\n"
-            f"✍️ <i>Bajarilishi kerak bo'lgan vazifani yozing (masalan: 'Loyihaga yangi login funksiyasini qo'sh' yoki 'Barcha fayllardagi xatolarni tekshir'):</i>",
+            f"✍️ <i>Bajarilishi kerak bo'lgan vazifani yozing (masalan: 'Loyihaga yangi login funksiyasini qo'sh' yoki 'Barcha fayllardagi xatolarni tekshir'):</i>\n\n"
+            f"<i>(Bekor qilish uchun: /cancel)</i>",
             parse_mode="HTML"
         )
         return
@@ -43,9 +56,10 @@ async def cmd_ai_agent(message: Message, state: FSMContext):
     await _run_agent_flow(message, instruction, cwd)
 
 
-@router.message(F.text == "🤖 AI Agent")
+@router.message(F.text == "🤖 AI Agent", StateFilter("*"))
 async def btn_ai_agent_menu(message: Message, state: FSMContext):
     """Pastki tugma orqali AI Agent menyusi."""
+    await state.clear()
     user_id = message.from_user.id
     cwd = get_user_cwd(user_id)
 
@@ -61,29 +75,31 @@ async def btn_ai_agent_menu(message: Message, state: FSMContext):
         f"• <code>/explain &lt;fayl&gt;</code> — Fayl kodi qanday ishlashini tushunish\n"
         f"• <code>/review &lt;fayl&gt;</code> — Code Review va xavfsizlik tekshiruvi\n"
         f"• <code>/ai &lt;savol&gt;</code> — Dasturlash bo'yicha to'g'ridan-to'g'ri AI bilan suhbat\n\n"
-        f"<i>Quyida to'g'ridan-to'g'ri vazifangizni yozishingiz mumkin:</i>"
+        f"<i>Quyida to'g'ridan-to'g'ri vazifangizni yozishingiz mumkin (yoki /cancel):</i>"
     )
     await state.update_data(cwd=str(cwd))
     await state.set_state(AIStates.waiting_for_agent_instruction)
     await message.answer(text, parse_mode="HTML")
 
 
-@router.message(Command("ai"))
+@router.message(Command("ai"), StateFilter("*"))
 async def cmd_ai_ask(message: Message, state: FSMContext):
     """To'g'ridan-to'g'ri AI ga savol berish."""
+    await state.clear()
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         await state.set_state(AIStates.waiting_for_ai_question)
-        await message.answer("💬 AI ga savolingizni yozing:")
+        await message.answer("💬 AI ga savolingizni yozing (bekor qilish uchun /cancel):")
         return
 
     question = args[1].strip()
     await _answer_ai_question(message, question)
 
 
-@router.message(Command("explain"))
-async def cmd_explain_code(message: Message):
+@router.message(Command("explain"), StateFilter("*"))
+async def cmd_explain_code(message: Message, state: FSMContext):
     """Kodni tushuntirish."""
+    await state.clear()
     user_id = message.from_user.id
     cwd = get_user_cwd(user_id)
     args = message.text.split(maxsplit=1)
@@ -102,9 +118,10 @@ async def cmd_explain_code(message: Message):
     await _send_long_response(status_msg, f"📖 <b>Kod Tahlili:</b> <code>{escape_html(file_path.name)}</code>\n\n{explanation}")
 
 
-@router.message(Command("review"))
-async def cmd_review_code(message: Message):
+@router.message(Command("review"), StateFilter("*"))
+async def cmd_review_code(message: Message, state: FSMContext):
     """Code Review o'tkazish."""
+    await state.clear()
     user_id = message.from_user.id
     cwd = get_user_cwd(user_id)
     args = message.text.split(maxsplit=1)
@@ -123,9 +140,10 @@ async def cmd_review_code(message: Message):
     await _send_long_response(status_msg, f"🔍 <b>Code Review:</b> <code>{escape_html(file_path.name)}</code>\n\n{review}")
 
 
-@router.message(Command("fix"))
-async def cmd_fix_code(message: Message):
+@router.message(Command("fix"), StateFilter("*"))
+async def cmd_fix_code(message: Message, state: FSMContext):
     """Koddagi xatolikni AI orqali tuzatish."""
+    await state.clear()
     user_id = message.from_user.id
     cwd = get_user_cwd(user_id)
     parts = message.text.split(maxsplit=2)
@@ -159,18 +177,32 @@ async def cmd_fix_code(message: Message):
 
 @router.message(AIStates.waiting_for_agent_instruction)
 async def handle_agent_instruction_state(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text.startswith("/cancel") or text.startswith("/start") or text in MAIN_MENU_BUTTONS:
+        await state.clear()
+        if text.startswith("/cancel"):
+            await message.answer("❌ AI vazifasi bekor qilindi.")
+        return
+
     data = await state.get_data()
     cwd_str = data.get("cwd")
     await state.clear()
 
     cwd = Path(cwd_str) if cwd_str else get_user_cwd(message.from_user.id)
-    await _run_agent_flow(message, message.text.strip(), cwd)
+    await _run_agent_flow(message, text, cwd)
 
 
 @router.message(AIStates.waiting_for_ai_question)
 async def handle_ai_question_state(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if text.startswith("/cancel") or text.startswith("/start") or text in MAIN_MENU_BUTTONS:
+        await state.clear()
+        if text.startswith("/cancel"):
+            await message.answer("❌ AI savoli bekor qilindi.")
+        return
+
     await state.clear()
-    await _answer_ai_question(message, message.text.strip())
+    await _answer_ai_question(message, text)
 
 
 async def _run_agent_flow(message: Message, instruction: str, cwd: Path):
