@@ -174,7 +174,17 @@ class AccountCleanerService:
 
         client = await AccountCleanerService.get_client(user_id)
         if not client.is_connected():
-            await client.connect()
+            try:
+                await client.connect()
+            except Exception as conn_err:
+                err_text = str(conn_err)
+                if "403" in err_text or "forbidden" in err_text.lower():
+                    raise RuntimeError(
+                        "PythonAnywhere (bepul tarif) Telegram MTProto to'g'ridan-to'g'ri ulanishini cheklaydi (403 Forbidden). "
+                        "Telegram hisobni tozalash (Cleaner) funksiyasi ishlashi uchun botni kompyuteringizda (run.bat) "
+                        "yoki cheklovsiz VPS serverda ishga tushiring."
+                    )
+                raise conn_err
 
         try:
             result = await client.send_code_request(phone)
@@ -190,16 +200,29 @@ class AccountCleanerService:
             raise ValueError("Telefon raqam noto'g'ri kiritildi! Masalan: +998901234567")
         except PhoneNumberBannedError:
             raise PermissionError("Ushbu telefon raqam Telegram tomonidan bloklangan!")
-        except ConnectionError as e:
+        except Exception as e:
+            err_text = str(e)
+            if "403" in err_text or "forbidden" in err_text.lower():
+                raise RuntimeError(
+                    "PythonAnywhere (bepul tarif) Telegram MTProto ulanishini cheklaydi (403 Forbidden). "
+                    "Cleaner to'liq ishlashi uchun botni o'zingizning kompyuteringizda (run.bat) ishga tushiring."
+                )
             logger.warning(f"Telegram bilan ulanishda xato, qayta ulanmoqda: {e}")
-            await client.connect()
             try:
+                await client.connect()
                 result = await client.send_code_request(phone)
                 AccountCleanerService._phone_hashes[user_id] = result.phone_code_hash
                 return result.phone_code_hash
             except FloodWaitError as fe:
                 time_str = format_seconds(fe.seconds)
                 raise RuntimeError(f"Telegram cheklovi (FloodWait)! Iltimos, {time_str} kuting.")
+            except Exception as e2:
+                if "403" in str(e2) or "forbidden" in str(e2).lower():
+                    raise RuntimeError(
+                        "PythonAnywhere bepul tarifida 403 Forbidden cheklovi mavjud. "
+                        "Botni o'z kompyuteringizda ishga tushiring."
+                    )
+                raise e2
 
     @staticmethod
     async def complete_sign_in(user_id: int, phone: str, code: str, password: Optional[str] = None) -> tuple[bool, str]:
