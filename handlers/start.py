@@ -32,9 +32,15 @@ async def cmd_start(message: Message, state: FSMContext):
         "<i>Quyidagi tugmalardan birini tanlang yoki buyruq yuboring:</i>"
     )
 
-    # Avval pastki asosiy reply klaviaturani yangilaymiz
+    # Pastki doimiy klaviaturani majburiy yangilash
     await message.answer(
         welcome_text,
+        parse_mode="HTML",
+        reply_markup=get_main_reply_keyboard()
+    )
+    # Qo'shimcha interaktiv inline menyuni yuborish
+    await message.answer(
+        "⚡ <b>Tezkor menyu:</b>",
         parse_mode="HTML",
         reply_markup=start_main_inline_keyboard()
     )
