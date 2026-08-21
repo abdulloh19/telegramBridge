@@ -139,14 +139,39 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
                     doc_file = FSInputFile(str(file_path), filename=item["filename"])
                     await message.answer_document(doc_file, caption=f"🎬 <b>{escape_html(item['filename'])}</b>", parse_mode="HTML")
             else:
-                # 50 MB dan katta bo'lsa server diskida saqlanadi
-                await message.answer(
-                    f"📁 <b>{escape_html(item['filename'])}</b> ({item['size_formatted']})\n\n"
-                    f"⚠️ <i>Telegram Bot API cheklovi (50MB) sababli fayl server/kompyuteringiz xotirasida saqlandi:</i>\n"
-                    f"📍 <code>{escape_html(str(file_path))}</code>\n\n"
-                    f"Uni /files bo'limidan ko'rishingiz yoki kompyuteringizda ochishingiz mumkin.",
-                    parse_mode="HTML"
+                # 50 MB dan katta bo'lsa (2 GB gacha), Telethon orqali cheklovsiz chatga yuboramiz!
+                caption = (
+                    f"🎬 <b>{escape_html(item['filename'])}</b>\n"
+                    f"📊 Hajmi: {item['size_formatted']} (Katta hajm)\n"
+                    f"💾 Saqlandi: <code>downloads/{file_path.name}</code>"
                 )
+                sent_via_telethon = False
+                try:
+                    if await AccountCleanerService.is_authorized(user_id):
+                        upload_notice = await message.answer(f"📤 <b>{escape_html(item['filename'])}</b> ({item['size_formatted']}) katta hajm bo'lgani uchun Telethon orqali chatga yuborilmoqda...")
+                        client = await AccountCleanerService.get_client(user_id)
+                        await client.send_file(
+                            user_id,
+                            file=str(file_path),
+                            caption=caption,
+                            parse_mode="html",
+                            supports_streaming=True
+                        )
+                        try:
+                            await upload_notice.delete()
+                        except Exception:
+                            pass
+                        sent_via_telethon = True
+                except Exception as telethon_err:
+                    logger.warning(f"Telethon orqali yuborishda xato: {telethon_err}")
+
+                if not sent_via_telethon:
+                    await message.answer(
+                        f"📁 <b>{escape_html(item['filename'])}</b> ({item['size_formatted']})\n\n"
+                        f"📍 Fayl saqlandi: <code>{escape_html(str(file_path))}</code>\n"
+                        f"Uni /files bo'limidan boshqarishingiz mumkin.",
+                        parse_mode="HTML"
+                    )
 
         await status_msg.delete()
 

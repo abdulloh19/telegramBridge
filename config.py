@@ -45,7 +45,9 @@ else:
 
 # AI Sozlamalari
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-AI_MODEL = os.getenv("AI_MODEL", "gemini-2.5-flash").strip()
+AI_MODEL = os.getenv("AI_MODEL", "gemini-3.6-flash").strip()
+if AI_MODEL in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+    AI_MODEL = "gemini-3.6-flash"
 
 # Terminal Sozlamalari
 SHELL_TYPE = os.getenv("SHELL_TYPE", "powershell").lower().strip()

@@ -76,6 +76,29 @@ def format_seconds(seconds: int) -> str:
     return f"{hours} soat {rem_min} daqiqa"
 
 
+AUTH_INFO_FILE = SESSIONS_DIR / "auth_info.json"
+
+
+def _load_auth_info() -> dict:
+    try:
+        if AUTH_INFO_FILE.exists():
+            import json
+            with open(AUTH_INFO_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_auth_info(data: dict):
+    try:
+        import json
+        with open(AUTH_INFO_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
 class AccountCleanerService:
     """Ko'p foydalanuvchili Telegram hisobini tozalash xizmati."""
 
@@ -86,7 +109,24 @@ class AccountCleanerService:
     def is_configured() -> bool:
         """API_ID va API_HASH mavjudligini tekshiradi."""
         import config
-        return bool(config.TELEGRAM_API_ID and config.TELEGRAM_API_HASH and config.TELEGRAM_API_ID.isdigit())
+        return bool(config.TELEGRAM_API_ID and config.TELEGRAM_API_HASH and str(config.TELEGRAM_API_ID).isdigit())
+
+    @staticmethod
+    def get_cached_profile(user_id: int) -> Optional[dict]:
+        info = _load_auth_info()
+        return info.get(str(user_id))
+
+    @staticmethod
+    def save_profile(user_id: int, profile: dict):
+        info = _load_auth_info()
+        info[str(user_id)] = profile
+        _save_auth_info(info)
+
+    @staticmethod
+    def remove_profile(user_id: int):
+        info = _load_auth_info()
+        info.pop(str(user_id), None)
+        _save_auth_info(info)
 
     @staticmethod
     async def get_client(user_id: int):
@@ -134,20 +174,35 @@ class AccountCleanerService:
         if not session_file.exists():
             return False
 
+        cached = AccountCleanerService.get_cached_profile(user_id)
+
         try:
             async def _check():
                 client = await AccountCleanerService.get_client(user_id)
-                return await client.is_user_authorized()
+                auth = await client.is_user_authorized()
+                if auth:
+                    me = await client.get_me()
+                    first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
+                    username = f"@{me.username}" if getattr(me, 'username', None) else ""
+                    phone = getattr(me, 'phone', '') or ''
+                    AccountCleanerService.save_profile(user_id, {
+                        "id": me.id,
+                        "name": first_name,
+                        "username": username,
+                        "phone": phone
+                    })
+                return auth
 
             return await asyncio.wait_for(_check(), timeout=3.0)
         except Exception as e:
             logger.warning(f"Avtorizatsiyani tekshirishda xatolik/timeout ({user_id}): {e}")
-            return False
+            return bool(cached and session_file.exists())
 
     @staticmethod
     async def logout(user_id: int) -> bool:
         """Foydalanuvchi sessiyasini uzadi va sessiya fayllarini tozalaydi."""
         try:
+            AccountCleanerService.remove_profile(user_id)
             if user_id in AccountCleanerService._clients:
                 client = AccountCleanerService._clients[user_id]
                 try:
@@ -204,8 +259,9 @@ class AccountCleanerService:
         import qrcode
         import io
 
-        # Toza yangi sessiya bilan boshlash
-        await AccountCleanerService.reset_unauthorized_session(user_id)
+        # Agar avval kirmagan bo'lsa, toza yangi sessiya bilan boshlash
+        if not await AccountCleanerService.is_authorized(user_id):
+            await AccountCleanerService.reset_unauthorized_session(user_id)
 
         client = await AccountCleanerService.get_client(user_id)
         if not client.is_connected():
@@ -235,6 +291,13 @@ class AccountCleanerService:
                     me = await client.get_me()
                     first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
                     username = f"@{me.username}" if getattr(me, 'username', None) else f"ID: {me.id}"
+                    phone = getattr(me, 'phone', '') or ''
+                    AccountCleanerService.save_profile(user_id, {
+                        "id": me.id,
+                        "name": first_name,
+                        "username": username,
+                        "phone": phone
+                    })
                     return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
                 except PasswordHashInvalidError:
                     return False, "❌ 2FA paroli noto'g'ri kiritildi!"
@@ -248,6 +311,13 @@ class AccountCleanerService:
             me = await client.get_me()
             first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
             username = f"@{me.username}" if getattr(me, 'username', None) else f"ID: {me.id}"
+            phone = getattr(me, 'phone', '') or ''
+            AccountCleanerService.save_profile(user_id, {
+                "id": me.id,
+                "name": first_name,
+                "username": username,
+                "phone": phone
+            })
             return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
         except SessionPasswordNeededError:
             return False, "2FA_REQUIRED"
@@ -380,6 +450,13 @@ class AccountCleanerService:
                     me = await client.get_me()
                     first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
                     username = f"@{me.username}" if getattr(me, 'username', None) else f"ID: {me.id}"
+                    phone_val = getattr(me, 'phone', '') or phone
+                    AccountCleanerService.save_profile(user_id, {
+                        "id": me.id,
+                        "name": first_name,
+                        "username": username,
+                        "phone": phone_val
+                    })
                     return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
                 except PasswordHashInvalidError:
                     return False, "❌ 2FA paroli noto'g'ri kiritildi!"
@@ -395,6 +472,13 @@ class AccountCleanerService:
             me = await client.get_me()
             first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
             username = f"@{me.username}" if getattr(me, 'username', None) else f"ID: {me.id}"
+            phone_val = getattr(me, 'phone', '') or phone
+            AccountCleanerService.save_profile(user_id, {
+                "id": me.id,
+                "name": first_name,
+                "username": username,
+                "phone": phone_val
+            })
             return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
 
         except SessionPasswordNeededError:

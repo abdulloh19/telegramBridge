@@ -156,12 +156,20 @@ async def cmd_cleaner_menu(message: Message, state: FSMContext):
         await message.answer(text, parse_mode="HTML", reply_markup=cleaner_login_methods_keyboard())
         return
 
+    profile = AccountCleanerService.get_cached_profile(user_id)
+    user_str = ""
+    if profile:
+        name = escape_html(profile.get("name", "Foydalanuvchi"))
+        uname = f" ({profile.get('username')})" if profile.get("username") else ""
+        user_str = f"👤 <b>Ulangan hisob:</b> <b>{name}</b>{uname}\n🆔 <b>ID:</b> <code>{user_id}</code>\n\n"
+
     text = (
-        "🧹 <b>Telegram Hisobni Tozalash Markazi</b>\n\n"
-        "Kerakli bo'limni tanlang:\n"
-        "• <b>O'chgan hisoblar</b> — 'Deleted Account' bo'lib qolgan foydalanuvchilar bilan chatlarni tozalash;\n"
-        "• <b>Nofaol kanallar</b> — 60 kundan ortiq yangilik bo'lmagan kanal/guruhlardan chiqish;\n"
-        "• <b>Eski dialoglar</b> — 90 kundan eski yozishmalarni tozalash."
+        f"🧹 <b>Telegram Hisobni Tozalash Markazi</b>\n\n"
+        f"{user_str}"
+        f"<i>Kerakli bo'limni tanlang:</i>\n"
+        f"• <b>O'chgan hisoblar</b> — 'Deleted Account' bo'lib qolgan foydalanuvchilar bilan chatlarni tozalash;\n"
+        f"• <b>Nofaol kanallar</b> — 60 kundan ortiq yangilik bo'lmagan kanal/guruhlardan chiqish;\n"
+        f"• <b>Eski dialoglar</b> — 90 kundan eski yozishmalarni tozalash."
     )
     await message.answer(text, parse_mode="HTML", reply_markup=cleaner_main_keyboard(is_auth=True))
 

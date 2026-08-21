@@ -115,15 +115,26 @@ class AIService:
 
             def _call():
                 from google.genai import types
-                response = client.models.generate_content(
-                    model=AI_MODEL,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=full_system,
-                        temperature=0.7,
-                    )
-                )
-                return response.text
+                models_to_try = [AI_MODEL, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-2.5-flash-lite"]
+                # Duplikatlarni olib tashlash
+                seen = set()
+                unique_models = [m for m in models_to_try if not (m in seen or seen.add(m))]
+                last_err = None
+                for model_name in unique_models:
+                    try:
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                system_instruction=full_system,
+                                temperature=0.7,
+                            )
+                        )
+                        return response.text
+                    except Exception as err:
+                        last_err = err
+                        logger.warning(f"Model {model_name} xato berdi, keyingisi sinab ko'rilmoqda: {err}")
+                raise last_err
 
             result = await asyncio.to_thread(_call)
             return result or "AI bo'sh javob qaytardi."
@@ -247,78 +258,91 @@ class AIService:
                     pass
 
             def _step_call():
-                return client.models.generate_content(
-                    model=AI_MODEL,
-                    contents=conversation_history,
-                    config=types.GenerateContentConfig(
-                        system_instruction=agent_system,
-                        temperature=0.3,
-                        tools=[
-                            types.Tool(function_declarations=[
-                                types.FunctionDeclaration(
-                                    name="read_file",
-                                    description="Faylni o'qish",
-                                    parameters=types.Schema(
-                                        type="OBJECT",
-                                        properties={"file_path": types.Schema(type="STRING", description="Fayl yo'li")},
-                                        required=["file_path"]
-                                    )
-                                ),
-                                types.FunctionDeclaration(
-                                    name="write_file",
-                                    description="Faylga yozish",
-                                    parameters=types.Schema(
-                                        type="OBJECT",
-                                        properties={
-                                            "file_path": types.Schema(type="STRING", description="Fayl yo'li"),
-                                            "content": types.Schema(type="STRING", description="Yoziladigan matn")
-                                        },
-                                        required=["file_path", "content"]
-                                    )
-                                ),
-                                types.FunctionDeclaration(
-                                    name="replace_in_file",
-                                    description="Fayl ichidagi matnni almashtirish",
-                                    parameters=types.Schema(
-                                        type="OBJECT",
-                                        properties={
-                                            "file_path": types.Schema(type="STRING", description="Fayl yo'li"),
-                                            "target": types.Schema(type="STRING", description="Eski matn"),
-                                            "replacement": types.Schema(type="STRING", description="Yangi matn")
-                                        },
-                                        required=["file_path", "target", "replacement"]
-                                    )
-                                ),
-                                types.FunctionDeclaration(
-                                    name="list_files",
-                                    description="Papka ichidagi fayllarni ko'rish",
-                                    parameters=types.Schema(
-                                        type="OBJECT",
-                                        properties={"directory": types.Schema(type="STRING", description="Papka yo'li")},
-                                    )
-                                ),
-                                types.FunctionDeclaration(
-                                    name="execute_command",
-                                    description="Terminal buyrug'ini ishga tushirish",
-                                    parameters=types.Schema(
-                                        type="OBJECT",
-                                        properties={"command": types.Schema(type="STRING", description="Terminal buyrug'i")},
-                                        required=["command"]
-                                    )
-                                ),
-                                types.FunctionDeclaration(
-                                    name="search_code",
-                                    description="Loyiha ichidan qidirish",
-                                    parameters=types.Schema(
-                                        type="OBJECT",
-                                        properties={"query": types.Schema(type="STRING", description="Qidiruv so'zi")},
-                                        required=["query"]
-                                    )
-                                ),
-                            ])
-                        ]
-                    )
-                )
+                tools_decl = [
+                    types.Tool(function_declarations=[
+                        types.FunctionDeclaration(
+                            name="read_file",
+                            description="Faylni o'qish",
+                            parameters=types.Schema(
+                                type="OBJECT",
+                                properties={"file_path": types.Schema(type="STRING", description="Fayl yo'li")},
+                                required=["file_path"]
+                            )
+                        ),
+                        types.FunctionDeclaration(
+                            name="write_file",
+                            description="Faylga yozish",
+                            parameters=types.Schema(
+                                type="OBJECT",
+                                properties={
+                                    "file_path": types.Schema(type="STRING", description="Fayl yo'li"),
+                                    "content": types.Schema(type="STRING", description="Yoziladigan matn")
+                                },
+                                required=["file_path", "content"]
+                            )
+                        ),
+                        types.FunctionDeclaration(
+                            name="replace_in_file",
+                            description="Fayl ichidagi matnni almashtirish",
+                            parameters=types.Schema(
+                                type="OBJECT",
+                                properties={
+                                    "file_path": types.Schema(type="STRING", description="Fayl yo'li"),
+                                    "target": types.Schema(type="STRING", description="Eski matn"),
+                                    "replacement": types.Schema(type="STRING", description="Yangi matn")
+                                },
+                                required=["file_path", "target", "replacement"]
+                            )
+                        ),
+                        types.FunctionDeclaration(
+                            name="list_files",
+                            description="Papka ichidagi fayllarni ko'rish",
+                            parameters=types.Schema(
+                                type="OBJECT",
+                                properties={"directory": types.Schema(type="STRING", description="Papka yo'li")},
+                            )
+                        ),
+                        types.FunctionDeclaration(
+                            name="execute_command",
+                            description="Terminal buyrug'ini ishga tushirish",
+                            parameters=types.Schema(
+                                type="OBJECT",
+                                properties={"command": types.Schema(type="STRING", description="Terminal buyrug'i")},
+                                required=["command"]
+                            )
+                        ),
+                        types.FunctionDeclaration(
+                            name="search_code",
+                            description="Loyiha ichidan qidirish",
+                            parameters=types.Schema(
+                                type="OBJECT",
+                                properties={"query": types.Schema(type="STRING", description="Qidiruv so'zi")},
+                                required=["query"]
+                            )
+                        ),
+                    ])
+                ]
+
+                models_to_try = [AI_MODEL, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-2.5-flash-lite"]
+                seen = set()
+                unique_models = [m for m in models_to_try if not (m in seen or seen.add(m))]
+                last_err = None
+
+                for model_name in unique_models:
+                    try:
+                        return client.models.generate_content(
+                            model=model_name,
+                            contents=conversation_history,
+                            config=types.GenerateContentConfig(
+                                system_instruction=agent_system,
+                                temperature=0.3,
+                                tools=tools_decl
+                            )
+                        )
+                    except Exception as err:
+                        last_err = err
+                        logger.warning(f"Agent model {model_name} xato berdi: {err}")
+                raise last_err
 
             try:
                 response = await asyncio.to_thread(_step_call)

@@ -17,10 +17,17 @@ async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     cwd = get_user_cwd(user_id)
 
+    from services.account_cleaner_service import AccountCleanerService
+    profile = AccountCleanerService.get_cached_profile(user_id)
+    profile_line = ""
+    if profile:
+        p_name = escape_html(profile.get("name", "Foydalanuvchi"))
+        p_uname = f" ({profile.get('username')})" if profile.get("username") else ""
+        profile_line = f"👤 <b>Ulangan Telegram hisob:</b> <b>{p_name}</b>{p_uname}\n"
+
     welcome_text = (
         "🚀 <b>Telegram Dev Bridge & AI Agent ga xush kelibsiz!</b>\n\n"
-        "Ushbu bot orqali siz kompyuteringizdan uzoqda bo'lsangiz ham, "
-        "smartfoningizdagi Telegram orqali loyihalaringizni to'liq boshqara olasiz.\n\n"
+        f"{profile_line}"
         f"📂 <b>Joriy ishchi papka:</b>\n<code>{escape_html(str(cwd))}</code>\n\n"
         "✨ <b>Asosiy Imkoniyatlar:</b>\n"
         "• 📁 <b>Fayllar Menejeri:</b> Fayllarni ko'rish, tahrirlash, yuklab olish\n"
