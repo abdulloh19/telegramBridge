@@ -1,13 +1,66 @@
 import asyncio
+import os
+import platform
 import shutil
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 from config import TELEGRAM_API_ID, TELEGRAM_API_HASH, BASE_DIR
 from utils.logger import logger
 
 SESSIONS_DIR = BASE_DIR / "sessions"
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def get_telethon_proxy() -> Optional[dict]:
+    """Tizim yoki muhitdan (masalan: PythonAnywhere, .env) mos proksi sozlamasini oladi."""
+    proxy_str = (
+        os.getenv("TELEGRAM_PROXY")
+        or os.getenv("HTTP_PROXY")
+        or os.getenv("http_proxy")
+        or os.getenv("HTTPS_PROXY")
+        or os.getenv("https_proxy")
+    )
+    if not proxy_str:
+        # PythonAnywhere serveri tekshiruvi
+        is_pa = any([
+            "PYTHONANYWHERE_DOMAIN" in os.environ,
+            "PYTHONANYWHERE_SITE" in os.environ,
+            os.path.exists("/var/log/pythonanywhere"),
+            "pythonanywhere" in os.environ.get("HOME", "").lower(),
+            "zubayr" in str(Path.home()),
+            "pythonanywhere" in platform.node().lower()
+        ])
+        if is_pa:
+            proxy_str = "http://proxy.server:3128"
+            logger.info("PythonAnywhere proksi (Telethon) aniqlandi: http://proxy.server:3128")
+
+    if not proxy_str:
+        return None
+
+    try:
+        parsed = urlparse(proxy_str)
+        scheme = (parsed.scheme or "http").lower()
+        proxy_type = "http"
+        if "socks5" in scheme:
+            proxy_type = "socks5"
+        elif "socks4" in scheme:
+            proxy_type = "socks4"
+
+        proxy_dict = {
+            "proxy_type": proxy_type,
+            "addr": parsed.hostname or "127.0.0.1",
+            "port": parsed.port or (1080 if "socks" in scheme else 8080),
+        }
+        if parsed.username:
+            proxy_dict["username"] = parsed.username
+        if parsed.password:
+            proxy_dict["password"] = parsed.password
+        return proxy_dict
+    except Exception as e:
+        logger.warning(f"Telethon proksi manzilini formatlashda xatolik: {e}")
+        return None
 
 
 class AccountCleanerService:
@@ -35,10 +88,17 @@ class AccountCleanerService:
         session_path = str(SESSIONS_DIR / f"user_session_{user_id}")
 
         if user_id not in AccountCleanerService._clients:
+            proxy = get_telethon_proxy()
             client = TelegramClient(
                 session_path,
                 int(TELEGRAM_API_ID),
-                TELEGRAM_API_HASH
+                TELEGRAM_API_HASH,
+                proxy=proxy,
+                connection_retries=10,
+                timeout=25,
+                retry_delay=2,
+                auto_reconnect=True,
+                use_ipv6=False,
             )
             AccountCleanerService._clients[user_id] = client
 
@@ -96,9 +156,17 @@ class AccountCleanerService:
         client = await AccountCleanerService.get_client(user_id)
         if not client.is_connected():
             await client.connect()
-        result = await client.send_code_request(phone)
-        AccountCleanerService._phone_hashes[user_id] = result.phone_code_hash
-        return result.phone_code_hash
+
+        try:
+            result = await client.send_code_request(phone)
+            AccountCleanerService._phone_hashes[user_id] = result.phone_code_hash
+            return result.phone_code_hash
+        except ConnectionError as e:
+            logger.warning(f"Telegram bilan ulanishda xato, qayta ulanmoqda: {e}")
+            await client.connect()
+            result = await client.send_code_request(phone)
+            AccountCleanerService._phone_hashes[user_id] = result.phone_code_hash
+            return result.phone_code_hash
 
     @staticmethod
     async def complete_sign_in(user_id: int, phone: str, code: str, password: Optional[str] = None) -> tuple[bool, str]:
