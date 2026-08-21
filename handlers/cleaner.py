@@ -371,21 +371,28 @@ async def handle_2fa_input(message: Message, state: FSMContext):
     data = await state.get_data()
     phone = data.get("phone", "")
     code = data.get("code", "")
-    await state.clear()
 
     status_msg = await message.answer("⏳ 2FA parol tekshirilmoqda...")
     try:
         ok, res = await AccountCleanerService.complete_sign_in(user_id, phone, code, password=password)
         if ok:
+            await state.clear()
             await status_msg.edit_text(
-                f"{res}\n\nEndi hisobingizni tozalashingiz mumkin:",
-                reply_markup=cleaner_main_keyboard(is_auth=True)
+                f"{res}\n\n🎉 <b>Hisobingiz muvaffaqiyatli ulandi!</b>\nEndi hisobingizni tozalashingiz mumkin:",
+                reply_markup=cleaner_main_keyboard(is_auth=True),
+                parse_mode="HTML"
             )
         else:
-            await status_msg.edit_text(f"{res}")
+            await status_msg.edit_text(
+                f"{res}\n\n<i>Iltimos, 2FA parolingizni tekshirib qaytadan kiriting (Bekor qilish: /cancel):</i>",
+                parse_mode="HTML"
+            )
     except Exception as e:
         logger.error(f"2FA tekshirishda xatolik: {e}")
-        await status_msg.edit_text(f"❌ 2FA tekshirishda xatolik: {escape_html(str(e))}")
+        await status_msg.edit_text(
+            f"❌ <b>2FA tekshirishda xatolik:</b> {escape_html(str(e))}\n\n<i>Qaytadan urinib ko'ring yoki /cancel bosing:</i>",
+            parse_mode="HTML"
+        )
 
 
 # ==========================================
