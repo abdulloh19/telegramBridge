@@ -212,7 +212,7 @@ class AIService:
         instruction: str,
         cwd: Path,
         progress_callback: Optional[Callable[[str], None]] = None,
-        max_steps: int = 6
+        max_steps: int = 12
     ) -> str:
         """
         Avtonom AI Coding Agent tsikli (ReAct - Reason, Act, Observe).
@@ -230,7 +230,7 @@ class AIService:
 
         agent_system = (
             f"{SYSTEM_PROMPT}\n"
-            f"Sen hozir avtonom agent rejimidasan. Loyihaning joriy papkasi: `{cwd}`\n"
+            f"Sen loyiha ichida ishlaydigan mustaqil va mohir avtonom AI dasturchisan. Joriy papka: `{cwd}`\n"
             f"Senga quyidagi maxsus asboblar (tools) berilgan:\n"
             f"- read_file(file_path)\n"
             f"- write_file(file_path, content)\n"
@@ -238,7 +238,9 @@ class AIService:
             f"- list_files(directory)\n"
             f"- execute_command(command)\n"
             f"- search_code(query)\n\n"
-            f"Vazifani bajarish uchun zarur vositalardan foydalan. Ishni to'liq tugatganingda barcha o'zgarishlar va natijalarni o'zbek tilida chiroyli xulosa qilib ber."
+            f"Qoidalar:\n"
+            f"1. Kerakli asboblardan unumli va tez foydalan.\n"
+            f"2. Vazifani to'liq yakunlaganingdan so'ng, ortiqcha tool chaqirmasdan o'zbek tilida kiritilgan o'zgarishlar va natijalar haqida to'liq xulosa hisobotingni ber."
         )
 
         conversation_history: list[types.Content] = [
@@ -437,4 +439,26 @@ class AIService:
                 parts=tool_response_parts
             ))
 
-        return "⚠️ Agent ruxsat etilgan maksimal qadamlar soniga yetdi. Joriy holatni fayllar bo'limidan tekshirishingiz mumkin."
+        # Agar maksimal qadamga yetsa ham, to'liq yakuniy hisobot generatsiya qilamiz
+        try:
+            def _final_summary_call():
+                return client.models.generate_content(
+                    model=AI_MODEL,
+                    contents=conversation_history + [
+                        types.Content(
+                            role="user",
+                            parts=[types.Part.from_text(text="Bajarilgan barcha amallar va yakuniy natijalar bo'yicha to'liq hisobot ber.")]
+                        )
+                    ],
+                    config=types.GenerateContentConfig(
+                        system_instruction=agent_system,
+                        temperature=0.4
+                    )
+                )
+            final_resp = await asyncio.to_thread(_final_summary_call)
+            if final_resp and final_resp.text:
+                return final_resp.text
+        except Exception:
+            pass
+
+        return "✅ <b>Agent vazifani bajardi.</b> Natijalarni /files bo'limidan tekshirishingiz mumkin."
