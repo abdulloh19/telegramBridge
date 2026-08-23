@@ -19,6 +19,13 @@ async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     cwd = get_user_cwd(user_id)
 
+    from services.user_service import UserService
+    UserService.register_user(
+        user_id=user_id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name
+    )
+
     profile_line = ""
     try:
         from services.account_cleaner_service import AccountCleanerService

@@ -225,26 +225,66 @@ async def handle_broadcast_input(message: Message, state: FSMContext, bot: Bot):
 
 
 async def _send_broadcast(message: Message, broadcast_text: str, bot: Bot):
-    """Xabarni barcha adminlarga tarqatish."""
-    from config import ADMIN_IDS
+    """Xabarni barcha ro'yxatdan o'tgan foydalanuvchilar va adminlarga tarqatish."""
+    from services.user_service import UserService
+    all_users = UserService.get_all_user_ids()
     sent_count = 0
     fail_count = 0
 
-    status_msg = await message.answer("📢 Xabar tarqatilmoqda...")
+    status_msg = await message.answer(f"📢 Xabar {len(all_users)} ta a'zoga tarqatilmoqda...")
 
-    for adm_id in ADMIN_IDS:
+    for uid in all_users:
         try:
-            await bot.send_message(adm_id, f"📢 <b>Xabarnoma:</b>\n\n{broadcast_text}", parse_mode="HTML")
+            await bot.send_message(uid, f"📢 <b>Xabarnoma:</b>\n\n{broadcast_text}", parse_mode="HTML")
             sent_count += 1
+            await asyncio.sleep(0.05)
         except Exception:
             fail_count += 1
 
     await status_msg.edit_text(
         f"📢 <b>Xabarnoma yakunlandi!</b>\n\n"
-        f"✅ Muvaffaqiyatli yetkazildi: {sent_count} ta\n"
-        f"❌ Xatolar: {fail_count} ta",
+        f"✅ Muvaffaqiyatli yetkazildi: {sent_count} ta a'zoga\n"
+        f"❌ Xatolar (bloklaganlar): {fail_count} ta",
         parse_mode="HTML"
     )
+
+
+@router.message(Command("broadcast_contacts"))
+async def cmd_broadcast_contacts(message: Message):
+    """Ulangan shaxsiy Telegram hisobingizdagi barcha shaxsiy chatlarga (kontaktlarga) xabar tarqatish."""
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "👤 <b>Shaxsiy Telegram kontaktlaringizga xabar tarqatish:</b>\n\n"
+            "Foydalanish: <code>/broadcast_contacts &lt;xabar_matni&gt;</code>\n\n"
+            "<i>Ushbu buyruq shaxsiy hisobingizdagi (Userbot) oxirgi barcha shaxsiy dialoglarga xabar yuboradi.</i>",
+            parse_mode="HTML"
+        )
+        return
+
+    broadcast_text = parts[1].strip()
+    user_id = message.from_user.id
+    from services.account_cleaner_service import AccountCleanerService
+    if not await AccountCleanerService.is_authorized(user_id):
+        await message.answer("🔒 Avval Telegram hisobingizga kiring (/cleaner).", parse_mode="HTML")
+        return
+
+    status_msg = await message.answer("⏳ Shaxsiy kontaktlarga xabar tarqatilmoqda...")
+    try:
+        client = await AccountCleanerService.get_client(user_id)
+        dialogs = await client.get_dialogs(limit=50)
+        sent = 0
+        for d in dialogs:
+            if d.is_user and getattr(d.entity, 'bot', False) is False:
+                try:
+                    await client.send_message(d.id, broadcast_text)
+                    sent += 1
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+        await status_msg.edit_text(f"✅ Shaxsiy hisobingizdan <b>{sent} ta</b> kontaktga xabar yuborildi!", parse_mode="HTML")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Xatolik: {escape_html(str(e))}")
 
 
 # ==========================================
