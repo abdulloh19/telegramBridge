@@ -129,6 +129,33 @@ class AccountCleanerService:
         _save_auth_info(info)
 
     @staticmethod
+    async def get_or_fetch_profile(user_id: int) -> Optional[dict]:
+        """Keshdan yoki to'g'ridan-to'g'ri Telegram mijozidan foydalanuvchi profilini oladi va doimiy saqlaydi."""
+        cached = AccountCleanerService.get_cached_profile(user_id)
+        if cached:
+            return cached
+
+        session_file = SESSIONS_DIR / f"user_session_{user_id}.session"
+        if not session_file.exists():
+            return None
+
+        try:
+            client = await AccountCleanerService.get_client(user_id)
+            if await client.is_user_authorized():
+                me = await client.get_me()
+                profile = {
+                    "id": me.id,
+                    "name": getattr(me, 'first_name', '') or 'Foydalanuvchi',
+                    "username": f"@{me.username}" if getattr(me, 'username', None) else "",
+                    "phone": getattr(me, 'phone', '') or ''
+                }
+                AccountCleanerService.save_profile(user_id, profile)
+                return profile
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     async def get_client(user_id: int):
         """Har bir foydalanuvchi uchun alohida Telethon mijozini asinxron tarzda qaytaradi."""
         import config

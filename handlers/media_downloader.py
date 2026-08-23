@@ -198,3 +198,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
             f"❌ <b>Yuklab olishda xatolik:</b> {escape_html(str(e))}",
             parse_mode="HTML"
         )
+    finally:
+        # RAM xotiradagi vaqtincha buferlarni tozalash (Garbage Collector)
+        import gc
+        gc.collect()

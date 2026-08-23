@@ -160,6 +160,10 @@ class MediaDownloaderService:
             except Exception as e:
                 logger.error(f"Xabar #{msg_id} ni yuklab olishda xatolik: {e}")
 
+        # RAM xotirani zudlik bilan tozalash
+        import gc
+        gc.collect()
+
         return downloaded_files
 
     @staticmethod

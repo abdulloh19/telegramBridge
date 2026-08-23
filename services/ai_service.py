@@ -431,9 +431,9 @@ class AIService:
                     )
                 )
 
-            # Bajarilgan barcha tool natijalarini tarixga qo'shish
+            # Bajarilgan barcha tool natijalarini tarixga qo'shish (Google GenAI da role='user' bo'lishi shart)
             conversation_history.append(types.Content(
-                role="tool",
+                role="user",
                 parts=tool_response_parts
             ))
 
