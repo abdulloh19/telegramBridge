@@ -1,14 +1,19 @@
 import io
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from services.system_service import SystemService
 from keyboards.inline import system_actions_keyboard
 from utils.helpers import escape_html
 from utils.logger import logger
 
 router = Router()
+
+
+class BroadcastStates(StatesGroup):
+    waiting_for_broadcast_text = State()
 
 
 def _format_status_text(info: dict) -> str:
@@ -186,15 +191,42 @@ async def cmd_direct_user_message(message: Message):
 
 
 @router.message(Command("broadcast"))
-async def cmd_broadcast_message(message: Message, bot: Bot):
-    """Barcha adminlarga va faol foydalanuvchilarga xabar yuborish."""
-    from config import ADMIN_IDS
+async def cmd_broadcast_message(message: Message, state: FSMContext, bot: Bot):
+    """Barcha adminlarga va foydalanuvchilarga xabar yuborish."""
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        await message.answer("Foydalanish: <code>/broadcast &lt;xabar_matni&gt;</code>", parse_mode="HTML")
+        await state.set_state(BroadcastStates.waiting_for_broadcast_text)
+        await message.answer(
+            "📢 <b>Barcha foydalanuvchilarga qanday xabar yubormoqchisiz?</b>\n\n"
+            "Xabar matnini shu yerga yozib yuboring (Bekor qilish: /cancel):",
+            parse_mode="HTML"
+        )
         return
 
     broadcast_text = args[1].strip()
+    await _send_broadcast(message, broadcast_text, bot)
+
+
+@router.message(BroadcastStates.waiting_for_broadcast_text)
+async def handle_broadcast_input(message: Message, state: FSMContext, bot: Bot):
+    """Interaktiv kiritilgan xabarni tarqatish."""
+    if message.text and message.text.strip().startswith("/cancel"):
+        await state.clear()
+        await message.answer("❌ Xabar tarqatish bekor qilindi.")
+        return
+
+    await state.clear()
+    broadcast_text = message.text or message.caption or ""
+    if not broadcast_text:
+        await message.answer("❌ Bo'sh xabar yuborib bo'lmaydi.")
+        return
+
+    await _send_broadcast(message, broadcast_text, bot)
+
+
+async def _send_broadcast(message: Message, broadcast_text: str, bot: Bot):
+    """Xabarni barcha adminlarga tarqatish."""
+    from config import ADMIN_IDS
     sent_count = 0
     fail_count = 0
 
