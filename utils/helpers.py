@@ -114,3 +114,25 @@ def split_text_chunks(text: str, chunk_size: int = 3800) -> list[str]:
         chunks.append("".join(current_chunk))
 
     return chunks
+
+
+def format_speed(bytes_per_sec: float | int) -> str:
+    """Tezlikni (B/s, KB/s, MB/s) formatiga o'tkazadi."""
+    return f"{format_bytes(bytes_per_sec)}/s"
+
+
+def format_eta(seconds: float | int) -> str:
+    """Qolgan vaqtni (soniya, daqiqa) formatiga o'tkazadi."""
+    sec = int(seconds)
+    if sec <= 0:
+        return "0s"
+    if sec < 60:
+        return f"{sec} soniya"
+    minutes = sec // 60
+    rem_sec = sec % 60
+    if minutes < 60:
+        return f"{minutes} daq {rem_sec} soniya" if rem_sec else f"{minutes} daqiqa"
+    hours = minutes // 60
+    rem_min = minutes % 60
+    return f"{hours} soat {rem_min} daq"
+

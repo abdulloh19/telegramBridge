@@ -23,6 +23,10 @@ sessions/
 *.session
 *.session-journal
 
+# Media & downloads
+videolar/
+downloads/
+
 # IDE & OS
 .idea/
 .vscode/

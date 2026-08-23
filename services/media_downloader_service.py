@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Optional, Callable
 from config import BASE_DIR, get_user_cwd
 from services.account_cleaner_service import AccountCleanerService
-from utils.helpers import format_bytes, escape_html
+from services.fast_telethon import FastTelethon
+from utils.helpers import format_bytes, escape_html, format_speed, format_eta
 from utils.logger import logger
 
 VIDEOS_DIR = BASE_DIR / "videolar"
@@ -15,7 +16,7 @@ DOWNLOADS_DIR = VIDEOS_DIR
 
 
 class MediaDownloaderService:
-    """Telegram kanallar (jumladan yopiq/private kanallar)dan video va medialarni yuklab olish xizmati."""
+    """Telegram kanallar (jumladan yopiq/private kanallar)dan video va medialarni tezkor yuklab olish xizmati."""
 
     @staticmethod
     def parse_telegram_link(link: str) -> tuple[int | str | None, list[int]]:
@@ -83,10 +84,10 @@ class MediaDownloaderService:
         user_id: int,
         link: str,
         save_dir: Optional[Path] = None,
-        progress_callback: Optional[Callable[[int, int, str, float], None]] = None
+        progress_callback: Optional[Callable[[int, int, str, float, float, float], None]] = None
     ) -> list[dict]:
         """
-        Berilgan link orqali yopiq yoki ochiq kanaldan videolarni yuklab oladi.
+        Berilgan link orqali yopiq yoki ochiq kanaldan videolarni maksimal tezlikda parallel yuklab oladi.
         """
         ch_peer, msg_ids = MediaDownloaderService.parse_telegram_link(link)
         if not ch_peer or not msg_ids:
@@ -109,7 +110,6 @@ class MediaDownloaderService:
         target_dir.mkdir(parents=True, exist_ok=True)
 
         downloaded_files = []
-        last_progress_time = 0
 
         for msg_id in msg_ids:
             try:
@@ -117,44 +117,43 @@ class MediaDownloaderService:
                 if not msg or not msg.media:
                     continue
 
+                loc, dc_id, file_size, extracted_name = FastTelethon.extract_file_info(msg)
+                
                 # Media turi va nomini aniqlash
-                filename = f"video_{ch_peer}_{msg_id}.mp4"
+                filename = extracted_name or f"video_{ch_peer}_{msg_id}.mp4"
                 if hasattr(msg, "file") and msg.file and msg.file.name:
                     filename = msg.file.name
                 elif hasattr(msg, "video") and msg.video:
                     filename = f"video_{ch_peer}_{msg_id}.mp4"
-                elif hasattr(msg, "document") and msg.document:
-                    filename = getattr(msg.file, 'name', None) or f"doc_{ch_peer}_{msg_id}.bin"
 
                 out_path = target_dir / filename
 
-                def _telethon_progress(current, total):
-                    nonlocal last_progress_time
-                    now = time.time()
-                    if now - last_progress_time >= 1.5 or current == total:
-                        last_progress_time = now
-                        percent = (current / total) * 100 if total else 0
-                        if progress_callback:
-                            try:
-                                progress_callback(current, total, filename, percent)
-                            except Exception:
-                                pass
+                def _telethon_progress(current, total, speed, eta):
+                    percent = (current / total) * 100 if total else 0
+                    if progress_callback:
+                        try:
+                            progress_callback(current, total, filename, percent, speed, eta)
+                        except Exception:
+                            pass
 
-                # Yuklab olish
-                actual_path = await client.download_media(
-                    msg,
-                    file=str(out_path),
+                # Yuqori tezlikda parallel yuklab olish
+                actual_path = await FastTelethon.download_media(
+                    client=client,
+                    media_or_msg=msg,
+                    out_path=out_path,
+                    workers=4,
                     progress_callback=_telethon_progress
                 )
 
                 if actual_path and Path(actual_path).exists():
-                    file_size = Path(actual_path).stat().st_size
+                    actual_size = Path(actual_path).stat().st_size
                     downloaded_files.append({
                         "msg_id": msg_id,
+                        "msg": msg,
                         "path": str(actual_path),
                         "filename": Path(actual_path).name,
-                        "size_bytes": file_size,
-                        "size_formatted": format_bytes(file_size),
+                        "size_bytes": actual_size,
+                        "size_formatted": format_bytes(actual_size),
                     })
 
             except Exception as e:
@@ -172,10 +171,10 @@ class MediaDownloaderService:
         channel_id: int | str,
         limit: int = 10,
         save_dir: Optional[Path] = None,
-        progress_callback: Optional[Callable[[int, int, str, float], None]] = None
+        progress_callback: Optional[Callable[[int, int, str, float, float, float], None]] = None
     ) -> list[dict]:
         """
-        Kanal ichidagi oxirgi N ta videoni avtomatik qidirib yuklab oladi.
+        Kanal ichidagi oxirgi N ta videoni avtomatik qidirib tezkor yuklab oladi.
         """
         if not await AccountCleanerService.is_authorized(user_id):
             raise PermissionError("Avval hisobingizga kiring (/cleaner).")
@@ -185,8 +184,6 @@ class MediaDownloaderService:
         target_dir.mkdir(parents=True, exist_ok=True)
 
         downloaded_files = []
-        last_progress_time = 0
-
         count = 0
         async for msg in client.iter_messages(channel_id):
             if count >= limit:
@@ -199,28 +196,27 @@ class MediaDownloaderService:
 
                 out_path = target_dir / filename
 
-                def _telethon_progress(current, total):
-                    nonlocal last_progress_time
-                    now = time.time()
-                    if now - last_progress_time >= 1.5 or current == total:
-                        last_progress_time = now
-                        percent = (current / total) * 100 if total else 0
-                        if progress_callback:
-                            try:
-                                progress_callback(current, total, filename, percent)
-                            except Exception:
-                                pass
+                def _telethon_progress(current, total, speed, eta):
+                    percent = (current / total) * 100 if total else 0
+                    if progress_callback:
+                        try:
+                            progress_callback(current, total, filename, percent, speed, eta)
+                        except Exception:
+                            pass
 
                 try:
-                    actual_path = await client.download_media(
-                        msg,
-                        file=str(out_path),
+                    actual_path = await FastTelethon.download_media(
+                        client=client,
+                        media_or_msg=msg,
+                        out_path=out_path,
+                        workers=4,
                         progress_callback=_telethon_progress
                     )
                     if actual_path and Path(actual_path).exists():
                         file_size = Path(actual_path).stat().st_size
                         downloaded_files.append({
                             "msg_id": msg.id,
+                            "msg": msg,
                             "path": str(actual_path),
                             "filename": Path(actual_path).name,
                             "size_bytes": file_size,
@@ -230,3 +226,4 @@ class MediaDownloaderService:
                     logger.error(f"Videoni yuklab olishda xatolik ({msg.id}): {dl_err}")
 
         return downloaded_files
+

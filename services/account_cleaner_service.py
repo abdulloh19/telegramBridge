@@ -213,21 +213,25 @@ class AccountCleanerService:
                 auth = await client.is_user_authorized()
                 if auth:
                     me = await client.get_me()
-                    first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
-                    username = f"@{me.username}" if getattr(me, 'username', None) else ""
-                    phone = getattr(me, 'phone', '') or ''
-                    AccountCleanerService.save_profile(user_id, {
-                        "id": me.id,
-                        "name": first_name,
-                        "username": username,
-                        "phone": phone
-                    })
-                return auth
+                    if me:
+                        first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
+                        username = f"@{me.username}" if getattr(me, 'username', None) else ""
+                        phone = getattr(me, 'phone', '') or ''
+                        AccountCleanerService.save_profile(user_id, {
+                            "id": me.id,
+                            "name": first_name,
+                            "username": username,
+                            "phone": phone
+                        })
+                        return True
+                    return False
+                return False
 
-            return await asyncio.wait_for(_check(), timeout=3.0)
+            return await asyncio.wait_for(_check(), timeout=4.0)
         except Exception as e:
             logger.warning(f"Avtorizatsiyani tekshirishda xatolik/timeout ({user_id}): {e}")
-            return bool(cached and session_file.exists())
+            return False
+
 
     @staticmethod
     async def logout(user_id: int) -> bool:
