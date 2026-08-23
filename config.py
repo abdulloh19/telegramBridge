@@ -46,7 +46,7 @@ else:
 # AI Sozlamalari
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 AI_MODEL = os.getenv("AI_MODEL", "gemini-3.6-flash").strip()
-if AI_MODEL in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"):
+if any(old in AI_MODEL for old in ("2.5", "2.0", "1.5", "1.0", "flash-lite-preview")):
     AI_MODEL = "gemini-3.6-flash"
 
 # Terminal Sozlamalari

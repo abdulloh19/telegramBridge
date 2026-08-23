@@ -115,7 +115,7 @@ class AIService:
 
             def _call():
                 from google.genai import types
-                models_to_try = [AI_MODEL, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-2.5-flash-lite"]
+                models_to_try = [AI_MODEL, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
                 # Duplikatlarni olib tashlash
                 seen = set()
                 unique_models = [m for m in models_to_try if not (m in seen or seen.add(m))]
@@ -325,7 +325,7 @@ class AIService:
                     ])
                 ]
 
-                models_to_try = [AI_MODEL, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-2.5-flash-lite"]
+                models_to_try = [AI_MODEL, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
                 seen = set()
                 unique_models = [m for m in models_to_try if not (m in seen or seen.add(m))]
                 last_err = None
