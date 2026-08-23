@@ -11,7 +11,8 @@ from keyboards.inline import (
     cleaner_main_keyboard,
     confirm_clean_keyboard,
     cleaner_login_methods_keyboard,
-    cleaner_config_keyboard
+    cleaner_config_keyboard,
+    pinpad_keyboard
 )
 from utils.helpers import escape_html
 from utils.logger import logger
@@ -311,13 +312,15 @@ async def handle_phone_input(message: Message, state: FSMContext):
 
     try:
         _, delivery_info = await AccountCleanerService.send_auth_code(user_id, phone)
-        await state.update_data(phone=phone)
+        await state.update_data(phone=phone, pin_code="")
         await state.set_state(CleanerStates.waiting_for_code)
         await status_msg.edit_text(
             f"📱 <b>Raqam:</b> <code>{escape_html(phone)}</code>\n\n"
             f"{delivery_info}\n\n"
-            f"<i>Tasdiqlash kodini shu yerga yozib yuboring (Bekor qilish: /cancel):</i>",
-            parse_mode="HTML"
+            f"🛡️ <b>Telegram Anti-Phishing himoyasi:</b>\n"
+            f"<i>Kodni chatga yozmasdan, quyidagi tugmalar orqali bosing (shunda Telegram bloklamaydi):</i>",
+            parse_mode="HTML",
+            reply_markup=pinpad_keyboard("")
         )
     except Exception as e:
         logger.error(f"Kod yuborishda xatolik: {e}")
@@ -328,12 +331,95 @@ async def handle_phone_input(message: Message, state: FSMContext):
         )
 
 
+@router.callback_query(F.data.startswith("cl_pin:"))
+async def cb_pin_input(callback: CallbackQuery, state: FSMContext):
+    """Telegram xavfsizlik filtri bloklamasligi uchun tugmalar orqali kod kiritish."""
+    action = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    current_code = data.get("pin_code", "")
+    phone = data.get("phone", "")
+    user_id = callback.from_user.id
+
+    if action == "del":
+        current_code = current_code[:-1]
+        await state.update_data(pin_code=current_code)
+        await callback.message.edit_reply_markup(reply_markup=pinpad_keyboard(current_code))
+        await callback.answer()
+        return
+
+    elif action == "submit":
+        if len(current_code) < 5:
+            await callback.answer("Iltimos, 5 xonali kodni to'liq bosing!", show_alert=True)
+            return
+        code = current_code
+    elif action.isdigit():
+        if len(current_code) < 5:
+            current_code += action
+            await state.update_data(pin_code=current_code)
+
+        if len(current_code) < 5:
+            await callback.message.edit_reply_markup(reply_markup=pinpad_keyboard(current_code))
+            await callback.answer()
+            return
+        code = current_code
+    else:
+        await callback.answer()
+        return
+
+    # 5 xonali kod to'lganda avtomatik kirish
+    await callback.answer("Tekshirilmoqda...")
+    await callback.message.edit_text("⏳ <b>Tasdiqlash kodi tekshirilmoqda...</b>", parse_mode="HTML")
+
+    try:
+        ok, res = await AccountCleanerService.complete_sign_in(user_id, phone, code)
+        if not ok and res == "2FA_REQUIRED":
+            await state.update_data(code=code)
+            await state.set_state(CleanerStates.waiting_for_2fa)
+            await callback.message.edit_text(
+                "🔒 <b>Akkauntingizda 2FA (ikki bosqichli parol) o'rnatilgan.</b>\n\n"
+                "Iltimos, 2FA parolingizni shu yerga yozib yuboring (Bekor qilish: /cancel):",
+                parse_mode="HTML"
+            )
+            return
+
+        if ok:
+            await state.clear()
+            profile = await AccountCleanerService.get_or_fetch_profile(user_id)
+            name = escape_html(profile.get("name", "Foydalanuvchi")) if profile else "Foydalanuvchi"
+            await callback.message.edit_text(
+                f"{res}\n\n🎉 <b>Xush kelibsiz, {name}!</b>\nHisobingiz muvaffaqiyatli ulandi va doimiy saqlandi.",
+                parse_mode="HTML",
+                reply_markup=cleaner_main_keyboard(is_auth=True)
+            )
+        else:
+            await state.update_data(pin_code="")
+            await callback.message.edit_text(
+                f"{res}\n\n<i>Qaytadan kodni tugmalar orqali bosing:</i>",
+                parse_mode="HTML",
+                reply_markup=pinpad_keyboard("")
+            )
+    except Exception as e:
+        logger.error(f"Pin tekshirishda xatolik: {e}")
+        await state.update_data(pin_code="")
+        await callback.message.edit_text(
+            f"❌ <b>Xatolik:</b> {escape_html(str(e))}\n\n<i>Qaytadan urinib ko'ring:</i>",
+            parse_mode="HTML",
+            reply_markup=pinpad_keyboard("")
+        )
+
+
 @router.message(CleanerStates.waiting_for_code)
 async def handle_code_input(message: Message, state: FSMContext):
     if message.text.strip().startswith("/cancel"):
         await state.clear()
         await message.answer("❌ Kirish jarayoni bekor qilindi.")
         return
+
+    # Telegram chat skaneri kodni ko'rib qolib bloklamasligi uchun xabarni chatdan o'chiramiz
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
     code = message.text.strip().replace(" ", "").replace("-", "")
     user_id = message.from_user.id
@@ -354,14 +440,21 @@ async def handle_code_input(message: Message, state: FSMContext):
             )
             return
 
-        await state.clear()
         if ok:
+            await state.clear()
+            profile = await AccountCleanerService.get_or_fetch_profile(user_id)
+            name = escape_html(profile.get("name", "Foydalanuvchi")) if profile else "Foydalanuvchi"
             await status_msg.edit_text(
-                f"{res}\n\nEndi hisobingizni tozalashingiz mumkin:",
+                f"{res}\n\n🎉 <b>Xush kelibsiz, {name}!</b>\nHisobingiz ulandi va doimiy saqlandi.",
+                parse_mode="HTML",
                 reply_markup=cleaner_main_keyboard(is_auth=True)
             )
         else:
-            await status_msg.edit_text(f"{res}")
+            await status_msg.edit_text(
+                f"{res}\n\n<i>Iltimos, kodni quyidagi tugmalar orqali bosing:</i>",
+                parse_mode="HTML",
+                reply_markup=pinpad_keyboard("")
+            )
     except Exception as e:
         logger.error(f"Kod tekshirishda xatolik: {e}")
         await status_msg.edit_text(f"❌ Xatolik yuz berdi: {escape_html(str(e))}")

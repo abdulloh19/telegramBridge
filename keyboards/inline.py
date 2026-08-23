@@ -237,3 +237,45 @@ def start_main_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def pinpad_keyboard(current_code: str = "") -> InlineKeyboardMarkup:
+    """Xavfsiz raqamli klaviatura (Telegram chat skanerini aylanib o'tish va kodni bloklanishdan saqlash uchun)."""
+    display = ""
+    for i in range(5):
+        if i < len(current_code):
+            display += f"{current_code[i]} "
+        else:
+            display += "• "
+    display = display.strip()
+
+    buttons = [
+        [
+            InlineKeyboardButton(text=f"🔑 Kod: [ {display} ]", callback_data="noop")
+        ],
+        [
+            InlineKeyboardButton(text="1", callback_data="cl_pin:1"),
+            InlineKeyboardButton(text="2", callback_data="cl_pin:2"),
+            InlineKeyboardButton(text="3", callback_data="cl_pin:3"),
+        ],
+        [
+            InlineKeyboardButton(text="4", callback_data="cl_pin:4"),
+            InlineKeyboardButton(text="5", callback_data="cl_pin:5"),
+            InlineKeyboardButton(text="6", callback_data="cl_pin:6"),
+        ],
+        [
+            InlineKeyboardButton(text="7", callback_data="cl_pin:7"),
+            InlineKeyboardButton(text="8", callback_data="cl_pin:8"),
+            InlineKeyboardButton(text="9", callback_data="cl_pin:9"),
+        ],
+        [
+            InlineKeyboardButton(text="⌫ O'chirish", callback_data="cl_pin:del"),
+            InlineKeyboardButton(text="0", callback_data="cl_pin:0"),
+            InlineKeyboardButton(text="🚀 Kirish", callback_data="cl_pin:submit"),
+        ],
+        [
+            InlineKeyboardButton(text="📷 QR Kod orqali", callback_data="cl_login_qr"),
+            InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cl_cancel"),
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
