@@ -140,17 +140,21 @@ class AccountCleanerService:
             return None
 
         try:
-            client = await AccountCleanerService.get_client(user_id)
-            if await client.is_user_authorized():
-                me = await client.get_me()
-                profile = {
-                    "id": me.id,
-                    "name": getattr(me, 'first_name', '') or 'Foydalanuvchi',
-                    "username": f"@{me.username}" if getattr(me, 'username', None) else "",
-                    "phone": getattr(me, 'phone', '') or ''
-                }
-                AccountCleanerService.save_profile(user_id, profile)
-                return profile
+            async def _fetch():
+                client = await AccountCleanerService.get_client(user_id)
+                if await client.is_user_authorized():
+                    me = await client.get_me()
+                    profile = {
+                        "id": me.id,
+                        "name": getattr(me, 'first_name', '') or 'Foydalanuvchi',
+                        "username": f"@{me.username}" if getattr(me, 'username', None) else "",
+                        "phone": getattr(me, 'phone', '') or ''
+                    }
+                    AccountCleanerService.save_profile(user_id, profile)
+                    return profile
+                return None
+
+            return await asyncio.wait_for(_fetch(), timeout=2.0)
         except Exception:
             pass
         return None
