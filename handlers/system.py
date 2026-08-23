@@ -124,6 +124,97 @@ async def cmd_notify(message: Message):
     await message.answer(f"{prefix} {result}")
 
 
+@router.message(Command("send"))
+async def cmd_send_message(message: Message, bot: Bot):
+    """Alohida foydalanuvchiga bot nomidan xabar yuborish."""
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer(
+            "📨 <b>Foydalanuvchiga bot nomidan xabar yuborish:</b>\n\n"
+            "Format: <code>/send &lt;user_id&gt; &lt;xabar_matni&gt;</code>\n"
+            "Masalan: <code>/send 123456789 Assalomu alaykum!</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    target_id = parts[1].strip()
+    msg_content = parts[2].strip()
+
+    try:
+        dest = int(target_id) if target_id.lstrip("-").isdigit() else target_id
+        await bot.send_message(dest, msg_content, parse_mode="HTML")
+        await message.answer(f"✅ Xabar <code>{escape_html(target_id)}</code> ga muvaffaqiyatli yuborildi!", parse_mode="HTML")
+    except Exception as e:
+        await message.answer(f"❌ Xabar yuborishda xatolik: {escape_html(str(e))}")
+
+
+@router.message(Command("dm"))
+async def cmd_direct_user_message(message: Message):
+    """Ulangan shaxsiy Telegram hisobingiz nomidan to'g'ridan-to'g'ri foydalanuvchiga yozish."""
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer(
+            "👤 <b>Shaxsiy hisobingizdan (Userbot) xabar yuborish:</b>\n\n"
+            "Format: <code>/dm &lt;@username yoki user_id yoki telefon&gt; &lt;xabar_matni&gt;</code>\n\n"
+            "<b>Misollar:</b>\n"
+            "• <code>/dm @username Salom, yaxshimisiz?</code>\n"
+            "• <code>/dm 123456789 Salom!</code>\n"
+            "• <code>/dm +998901234567 Salom!</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    target_entity = parts[1].strip()
+    msg_content = parts[2].strip()
+    user_id = message.from_user.id
+
+    from services.account_cleaner_service import AccountCleanerService
+    if not await AccountCleanerService.is_authorized(user_id):
+        await message.answer(
+            "🔒 Ushbu buyruqni ishlatish uchun avval Telegram hisobingizga kiring (/cleaner).",
+            parse_mode="HTML"
+        )
+        return
+
+    try:
+        client = await AccountCleanerService.get_client(user_id)
+        dest = int(target_entity) if target_entity.lstrip("-").isdigit() else target_entity
+        await client.send_message(dest, msg_content)
+        await message.answer(f"✅ Shaxsiy hisobingizdan <b>{escape_html(target_entity)}</b> ga xabar yetkazildi!", parse_mode="HTML")
+    except Exception as e:
+        await message.answer(f"❌ Xabar yuborishda xatolik: {escape_html(str(e))}")
+
+
+@router.message(Command("broadcast"))
+async def cmd_broadcast_message(message: Message, bot: Bot):
+    """Barcha adminlarga va faol foydalanuvchilarga xabar yuborish."""
+    from config import ADMIN_IDS
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("Foydalanish: <code>/broadcast &lt;xabar_matni&gt;</code>", parse_mode="HTML")
+        return
+
+    broadcast_text = args[1].strip()
+    sent_count = 0
+    fail_count = 0
+
+    status_msg = await message.answer("📢 Xabar tarqatilmoqda...")
+
+    for adm_id in ADMIN_IDS:
+        try:
+            await bot.send_message(adm_id, f"📢 <b>Xabarnoma:</b>\n\n{broadcast_text}", parse_mode="HTML")
+            sent_count += 1
+        except Exception:
+            fail_count += 1
+
+    await status_msg.edit_text(
+        f"📢 <b>Xabarnoma yakunlandi!</b>\n\n"
+        f"✅ Muvaffaqiyatli yetkazildi: {sent_count} ta\n"
+        f"❌ Xatolar: {fail_count} ta",
+        parse_mode="HTML"
+    )
+
+
 # ==========================================
 # Callback Handlers
 # ==========================================
