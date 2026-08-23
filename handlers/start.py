@@ -1,3 +1,4 @@
+import asyncio
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command, StateFilter
@@ -6,6 +7,7 @@ from keyboards.reply import get_main_reply_keyboard
 from keyboards.inline import start_main_inline_keyboard
 from config import get_user_cwd
 from utils.helpers import escape_html
+from utils.logger import logger
 
 router = Router()
 
@@ -17,15 +19,18 @@ async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     cwd = get_user_cwd(user_id)
 
-    from services.account_cleaner_service import AccountCleanerService
-    profile = AccountCleanerService.get_cached_profile(user_id)
     profile_line = ""
-    if profile:
-        p_name = escape_html(profile.get("name", "Foydalanuvchi"))
-        p_uname = f" ({profile.get('username')})" if profile.get("username") else ""
-        profile_line = f"👤 <b>Ulangan Telegram hisob:</b> 🟢 <b>{p_name}</b>{p_uname}\n"
-    else:
-        asyncio.create_task(AccountCleanerService.get_or_fetch_profile(user_id))
+    try:
+        from services.account_cleaner_service import AccountCleanerService
+        profile = AccountCleanerService.get_cached_profile(user_id)
+        if profile:
+            p_name = escape_html(profile.get("name", "Foydalanuvchi"))
+            p_uname = f" ({profile.get('username')})" if profile.get("username") else ""
+            profile_line = f"👤 <b>Ulangan Telegram hisob:</b> 🟢 <b>{p_name}</b>{p_uname}\n"
+        else:
+            asyncio.create_task(AccountCleanerService.get_or_fetch_profile(user_id))
+    except Exception as e:
+        logger.warning(f"Start profile check error: {e}")
 
     welcome_text = (
         "🚀 <b>Telegram Dev Bridge & AI Agent ga xush kelibsiz!</b>\n\n"
