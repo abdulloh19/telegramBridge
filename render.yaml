@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: telegram-dev-bridge
+    name: telegram-video-downloader
     env: python
     region: frankfurt
     plan: free
@@ -11,11 +11,11 @@ services:
         sync: false
       - key: ADMIN_IDS
         sync: false
-      - key: GEMINI_API_KEY
-        sync: false
       - key: TELEGRAM_API_ID
         sync: false
       - key: TELEGRAM_API_HASH
+        sync: false
+      - key: USER_SESSION_5787141744
         sync: false
       - key: PORT
         value: 10000

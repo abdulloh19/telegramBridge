@@ -100,7 +100,7 @@ def _save_auth_info(data: dict):
 
 
 class AccountCleanerService:
-    """Ko'p foydalanuvchili Telegram hisobini tozalash xizmati."""
+    """Ko'p foydalanuvchili Telegram hisobini tozalash va doimiy StringSession boshqaruvi."""
 
     _clients: dict[int, object] = {}
     _phone_hashes: dict[int, str] = {}
@@ -112,6 +112,53 @@ class AccountCleanerService:
         return bool(config.TELEGRAM_API_ID and config.TELEGRAM_API_HASH and str(config.TELEGRAM_API_ID).isdigit())
 
     @staticmethod
+    def get_persisted_session_string(user_id: int) -> Optional[str]:
+        """Atrof-muhit o'zgaruvchilari yoki auth_info.json dan doimiy StringSession ni oladi."""
+        # 1. .env yoki Environment variables
+        env_str = (
+            os.getenv(f"USER_SESSION_{user_id}")
+            or os.getenv("SESSION_STRING")
+            or os.getenv("TELEGRAM_STRING_SESSION")
+        )
+        if env_str and len(env_str.strip()) > 50:
+            return env_str.strip()
+
+        # 2. auth_info.json keshidan
+        info = _load_auth_info()
+        user_info = info.get(str(user_id), {})
+        cached_str = user_info.get("session_string")
+        if cached_str and len(cached_str.strip()) > 50:
+            return cached_str.strip()
+
+        return None
+
+    @staticmethod
+    def save_session_string(user_id: int, session_str: str):
+        """StringSession ni auth_info.json va .env ga butun umrga saqlaydi."""
+        if not session_str:
+            return
+        info = _load_auth_info()
+        if str(user_id) not in info:
+            info[str(user_id)] = {"id": user_id}
+        info[str(user_id)]["session_string"] = session_str
+        _save_auth_info(info)
+
+        # .env fayliga ham yozish
+        try:
+            env_file = BASE_DIR / ".env"
+            if env_file.exists():
+                content = env_file.read_text(encoding="utf-8")
+                key = f"USER_SESSION_{user_id}"
+                if key in content:
+                    import re
+                    content = re.sub(rf"{key}=.*", f"{key}={session_str}", content)
+                else:
+                    content += f"\n{key}={session_str}\n"
+                env_file.write_text(content, encoding="utf-8")
+        except Exception as e:
+            logger.warning(f".env ga session_string yozishda xato: {e}")
+
+    @staticmethod
     def get_cached_profile(user_id: int) -> Optional[dict]:
         info = _load_auth_info()
         return info.get(str(user_id))
@@ -119,7 +166,9 @@ class AccountCleanerService:
     @staticmethod
     def save_profile(user_id: int, profile: dict):
         info = _load_auth_info()
-        info[str(user_id)] = profile
+        existing = info.get(str(user_id), {})
+        existing.update(profile)
+        info[str(user_id)] = existing
         _save_auth_info(info)
 
     @staticmethod
@@ -132,36 +181,33 @@ class AccountCleanerService:
     async def get_or_fetch_profile(user_id: int) -> Optional[dict]:
         """Keshdan yoki to'g'ridan-to'g'ri Telegram mijozidan foydalanuvchi profilini oladi va doimiy saqlaydi."""
         cached = AccountCleanerService.get_cached_profile(user_id)
-        if cached:
+        if cached and cached.get("name"):
             return cached
-
-        session_file = SESSIONS_DIR / f"user_session_{user_id}.session"
-        if not session_file.exists():
-            return None
 
         try:
             async def _fetch():
                 client = await AccountCleanerService.get_client(user_id)
                 if await client.is_user_authorized():
                     me = await client.get_me()
-                    profile = {
-                        "id": me.id,
-                        "name": getattr(me, 'first_name', '') or 'Foydalanuvchi',
-                        "username": f"@{me.username}" if getattr(me, 'username', None) else "",
-                        "phone": getattr(me, 'phone', '') or ''
-                    }
-                    AccountCleanerService.save_profile(user_id, profile)
-                    return profile
+                    if me:
+                        profile = {
+                            "id": me.id,
+                            "name": getattr(me, 'first_name', '') or 'Foydalanuvchi',
+                            "username": f"@{me.username}" if getattr(me, 'username', None) else "",
+                            "phone": getattr(me, 'phone', '') or ''
+                        }
+                        AccountCleanerService.save_profile(user_id, profile)
+                        return profile
                 return None
 
-            return await asyncio.wait_for(_fetch(), timeout=2.0)
+            return await asyncio.wait_for(_fetch(), timeout=3.0)
         except Exception:
             pass
-        return None
+        return cached
 
     @staticmethod
     async def get_client(user_id: int):
-        """Har bir foydalanuvchi uchun alohida Telethon mijozini asinxron tarzda qaytaradi."""
+        """Har bir foydalanuvchi uchun Telethon mijozini (StringSession yoki SQLite orqali) asinxron tarzda qaytaradi."""
         import config
         if not AccountCleanerService.is_configured():
             raise ValueError(
@@ -170,13 +216,19 @@ class AccountCleanerService:
             )
 
         from telethon import TelegramClient
+        from telethon.sessions import StringSession, SQLiteSession
 
-        session_path = str(SESSIONS_DIR / f"user_session_{user_id}")
+        session_str = AccountCleanerService.get_persisted_session_string(user_id)
+        if session_str:
+            session = StringSession(session_str)
+        else:
+            session_path = str(SESSIONS_DIR / f"user_session_{user_id}")
+            session = session_path
 
         if user_id not in AccountCleanerService._clients:
             proxy = get_telethon_proxy()
             client = TelegramClient(
-                session_path,
+                session,
                 int(config.TELEGRAM_API_ID),
                 config.TELEGRAM_API_HASH,
                 proxy=proxy,
@@ -196,16 +248,15 @@ class AccountCleanerService:
 
     @staticmethod
     async def is_authorized(user_id: int) -> bool:
-        """Foydalanuvchi akkauntiga allaqachon kirilganmi tekshiradi (hech qachon osilib qolmaydi)."""
+        """Foydalanuvchi akkauntiga allaqachon kirilganmi tekshiradi (StringSession va fayl orqali)."""
         import config
         if not AccountCleanerService.is_configured():
             return False
 
+        has_string_session = bool(AccountCleanerService.get_persisted_session_string(user_id))
         session_file = SESSIONS_DIR / f"user_session_{user_id}.session"
-        if not session_file.exists():
+        if not has_string_session and not session_file.exists():
             return False
-
-        cached = AccountCleanerService.get_cached_profile(user_id)
 
         try:
             async def _check():
@@ -223,6 +274,13 @@ class AccountCleanerService:
                             "username": username,
                             "phone": phone
                         })
+                        # Sessiya satrini doimiy saqlab qo'yish
+                        try:
+                            saved_str = client.session.save()
+                            if isinstance(saved_str, str) and len(saved_str) > 50:
+                                AccountCleanerService.save_session_string(user_id, saved_str)
+                        except Exception:
+                            pass
                         return True
                     return False
                 return False
@@ -233,11 +291,17 @@ class AccountCleanerService:
             return False
 
 
+
     @staticmethod
     async def logout(user_id: int) -> bool:
-        """Foydalanuvchi sessiyasini uzadi va sessiya fayllarini tozalaydi."""
+        """Foydalanuvchi sessiyasini uzadi va sessiya fayllari hamda StringSession ni tozalaydi."""
         try:
             AccountCleanerService.remove_profile(user_id)
+            info = _load_auth_info()
+            if str(user_id) in info:
+                info[str(user_id)].pop("session_string", None)
+                _save_auth_info(info)
+
             if user_id in AccountCleanerService._clients:
                 client = AccountCleanerService._clients[user_id]
                 try:
@@ -311,7 +375,7 @@ class AccountCleanerService:
 
     @staticmethod
     async def wait_for_qr_login(user_id: int, qr_obj, password: Optional[str] = None) -> tuple[bool, str]:
-        """QR kod skanerlanishini yoki 2FA parolini tekshiradi."""
+        """QR kod skanerlanishini yoki 2FA parolini tekshiradi va StringSession ni doimiy saqlaydi."""
         from telethon.errors import (
             SessionPasswordNeededError,
             PasswordHashInvalidError,
@@ -333,6 +397,12 @@ class AccountCleanerService:
                         "username": username,
                         "phone": phone
                     })
+                    try:
+                        saved_str = client.session.save()
+                        if isinstance(saved_str, str) and len(saved_str) > 50:
+                            AccountCleanerService.save_session_string(user_id, saved_str)
+                    except Exception:
+                        pass
                     return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
                 except PasswordHashInvalidError:
                     return False, "❌ 2FA paroli noto'g'ri kiritildi!"
@@ -353,6 +423,12 @@ class AccountCleanerService:
                 "username": username,
                 "phone": phone
             })
+            try:
+                saved_str = client.session.save()
+                if isinstance(saved_str, str) and len(saved_str) > 50:
+                    AccountCleanerService.save_session_string(user_id, saved_str)
+            except Exception:
+                pass
             return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
         except SessionPasswordNeededError:
             return False, "2FA_REQUIRED"
@@ -428,7 +504,6 @@ class AccountCleanerService:
                     "Cleaner to'liq ishlashi uchun botni o'zingizning kompyuteringizda (run.bat) ishga tushiring."
                 )
             if "ResendCodeRequest" in err_text or "all available options" in err_text:
-                # Kod allaqachon yuborilgan bo'lsa, xatolik chiqarmaydi
                 saved_hash = AccountCleanerService._phone_hashes.get(user_id, "")
                 return (
                     saved_hash,
@@ -464,7 +539,7 @@ class AccountCleanerService:
 
     @staticmethod
     async def complete_sign_in(user_id: int, phone: str, code: str, password: Optional[str] = None) -> tuple[bool, str]:
-        """Tasdiqlash kodi va (agar bor bo'lsa 2FA parol) orqali tizimga kirish."""
+        """Tasdiqlash kodi va 2FA orqali kirish hamda StringSession ni doimiy saqlash."""
         client = await AccountCleanerService.get_client(user_id)
         if not client.is_connected():
             await client.connect()
@@ -478,7 +553,6 @@ class AccountCleanerService:
         )
 
         try:
-            # Agar 2FA parol yuborilgan bo'lsa, kodni qayta kiritmasdan to'g'ridan-to'g'ri parol orqali kiriladi
             if password:
                 try:
                     await client.sign_in(password=password)
@@ -492,6 +566,12 @@ class AccountCleanerService:
                         "username": username,
                         "phone": phone_val
                     })
+                    try:
+                        saved_str = client.session.save()
+                        if isinstance(saved_str, str) and len(saved_str) > 50:
+                            AccountCleanerService.save_session_string(user_id, saved_str)
+                    except Exception:
+                        pass
                     return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
                 except PasswordHashInvalidError:
                     return False, "❌ 2FA paroli noto'g'ri kiritildi!"
@@ -514,6 +594,12 @@ class AccountCleanerService:
                 "username": username,
                 "phone": phone_val
             })
+            try:
+                saved_str = client.session.save()
+                if isinstance(saved_str, str) and len(saved_str) > 50:
+                    AccountCleanerService.save_session_string(user_id, saved_str)
+            except Exception:
+                pass
             return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
 
         except SessionPasswordNeededError:
@@ -527,6 +613,7 @@ class AccountCleanerService:
             return False, f"⏳ Telegram cheklovi (FloodWait): Iltimos, {time_str} kuting."
         except Exception as e:
             return False, f"Kirishda xatolik: {str(e)}"
+
 
     @staticmethod
     async def scan_deleted_accounts(user_id: int) -> list[dict]:

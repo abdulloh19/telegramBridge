@@ -3,15 +3,10 @@ aiofiles>=24.1.0
 python-dotenv>=1.0.1
 psutil>=5.9.8
 Pillow>=10.2.0
-mss>=9.0.1
-google-genai>=0.1.1
 colorama>=0.4.6
 telethon>=1.36.0
 aiohttp-socks>=0.8.4
 python-socks>=2.4.0
 PySocks>=1.7.1
 qrcode>=8.0
-
-
-
-
+cryptography>=42.0.0
