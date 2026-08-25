@@ -14,34 +14,28 @@ from telethon.tl.functions.upload import (
 from telethon.tl.types import (
     InputDocumentFileLocation,
     InputPhotoFileLocation,
-    InputPeerPhotoFileLocation,
     InputFileBig,
     InputFile,
     Document,
-    Photo,
     MessageMediaDocument,
     MessageMediaPhoto,
     TypeInputFileLocation,
 )
 from utils.logger import logger
 
-CHUNK_SIZE = 512 * 1024  # 512 KB (Telegram MTProto ruxsat bergan eng katta blok hajmi)
-DEFAULT_WORKERS = 8       # Maksimal parallel oqimlar / ulanishlar soni
-
+CHUNK_SIZE = 512 * 1024  # 512 KB (Telegram MTProto ruxsat bergan maksimal blok hajmi)
+DEFAULT_WORKERS = 8       # Parallel oqimlar soni
 
 
 class FastTelethon:
     """
-    Telethon uchun ko'p oqimli (Multi-part parallel) yuqori tezlikdagi fayl yuklab oluvchi va yuklovchi.
-    Oddiy sequential yuklashga nisbatan tezlikni 10-20 baravargacha oshiradi.
+    Telethon uchun yuqori tezlikdagi Multi-Part Parallel yuklab olish va yuklash drayveri.
+    Eksport senderlarsiz to'g'ridan-to'g'ri klient orqali 512KB bloklarda parallel ishlaydi.
     """
 
     @staticmethod
     def extract_file_info(media_or_msg) -> Tuple[Optional[TypeInputFileLocation], Optional[int], int, str]:
-        """
-        Telegram xabari yoki media obyektidan location, dc_id, hajmi va fayl nomini aniqlaydi.
-        """
-        # Agar Message obyekti berilgan bo'lsa
+        """Telegram xabari yoki media obyektidan location, dc_id, hajmi va fayl nomini aniqlaydi."""
         if hasattr(media_or_msg, "media") and media_or_msg.media:
             media = media_or_msg.media
         else:
@@ -62,7 +56,6 @@ class FastTelethon:
                 file_reference=doc.file_reference,
                 thumb_size=""
             )
-            # Fayl nomini izlash
             for attr in getattr(doc, "attributes", []):
                 if hasattr(attr, "file_name") and attr.file_name:
                     filename = attr.file_name
@@ -115,20 +108,14 @@ class FastTelethon:
         workers: int = DEFAULT_WORKERS,
         progress_callback: Optional[Callable[[int, int, float, float], None]] = None
     ) -> Path:
-        """
-        Mediani parallel oqimlarda yuklab oladi.
-        progress_callback: (downloaded_bytes, total_bytes, speed_bytes_per_sec, eta_seconds)
-        """
+        """Mediani 512KB bloklarda parallel oqimlarda maksimal tezlikda yuklab oladi."""
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        location, dc_id, file_size, default_filename = cls.extract_file_info(media_or_msg)
+        location, dc_id, file_size, _ = cls.extract_file_info(media_or_msg)
 
-        # Agar location yoki hajm aniqlanmasa, yoki juda kichik bo'lsa (1MB dan kichik), standart usulda yuklaymiz
         if not location or not file_size or file_size < CHUNK_SIZE * 2:
             start_time = time.time()
-            last_bytes = 0
-
             def _std_cb(current, total):
                 if progress_callback and total:
                     elapsed = max(time.time() - start_time, 0.001)
@@ -139,35 +126,8 @@ class FastTelethon:
             res = await client.download_media(media_or_msg, file=str(out_path), progress_callback=_std_cb)
             return Path(res) if res else out_path
 
-        if not dc_id:
-            dc_id = client.session.dc_id
-
         part_count = math.ceil(file_size / CHUNK_SIZE)
-        workers_count = min(workers, part_count, 8)
-
-        senders = []
-        try:
-            for _ in range(workers_count):
-                sender = await client._borrow_exported_sender(dc_id)
-                senders.append(sender)
-        except Exception as err:
-            logger.warning(f"FastTelethon sender olishda xato ({err}), standart yuklashga o'tilmoqda.")
-            for s in senders:
-                try:
-                    await client._return_exported_sender(s)
-                except Exception:
-                    pass
-
-            start_time = time.time()
-            def _std_fallback_cb(current, total):
-                if progress_callback and total:
-                    elapsed = max(time.time() - start_time, 0.001)
-                    speed = current / elapsed
-                    eta = (total - current) / speed if speed > 0 else 0
-                    progress_callback(current, total, speed, eta)
-
-            res = await client.download_media(media_or_msg, file=str(out_path), progress_callback=_std_fallback_cb)
-            return Path(res) if res else out_path
+        workers_count = min(workers, part_count, 12)
 
         queue = asyncio.Queue()
         for i in range(part_count):
@@ -178,12 +138,12 @@ class FastTelethon:
         start_time = time.time()
         last_progress_time = 0
 
-        # Fayl diskda joy ajratish
+        # Fayl hajmini diskda oldindan ajratish
         with open(out_path, "wb") as f:
             f.seek(file_size - 1)
             f.write(b"\0")
 
-        async def _worker(sender):
+        async def _worker():
             nonlocal downloaded_bytes, last_progress_time
             with open(out_path, "r+b") as fp:
                 while not queue.empty():
@@ -204,9 +164,9 @@ class FastTelethon:
                     )
 
                     success = False
-                    for attempt in range(3):
+                    for attempt in range(4):
                         try:
-                            res = await sender.send(req)
+                            res = await client(req)
                             data = res.bytes
                             fp.seek(offset)
                             fp.write(data)
@@ -214,7 +174,7 @@ class FastTelethon:
                             async with lock:
                                 downloaded_bytes += len(data)
                                 now = time.time()
-                                if progress_callback and (now - last_progress_time >= 1.5 or downloaded_bytes >= file_size):
+                                if progress_callback and (now - last_progress_time >= 1.0 or downloaded_bytes >= file_size):
                                     last_progress_time = now
                                     elapsed = max(now - start_time, 0.001)
                                     speed = downloaded_bytes / elapsed
@@ -226,28 +186,21 @@ class FastTelethon:
                             success = True
                             break
                         except Exception as e:
-                            logger.warning(f"FastTelethon Part #{part_idx} urinish #{attempt+1} xato: {e}")
-                            await asyncio.sleep(0.5)
+                            logger.warning(f"FastTelethon Part #{part_idx} urinish #{attempt+1}: {e}")
+                            await asyncio.sleep(0.3)
 
                     if not success:
                         logger.error(f"Part #{part_idx} yuklanmadi, qayta navbatga qo'yildi.")
                         await queue.put(part_idx)
-                        await asyncio.sleep(1.0)
+                        await asyncio.sleep(0.5)
 
                     queue.task_done()
 
-        try:
-            tasks = [asyncio.create_task(_worker(s)) for s in senders]
-            await queue.join()
-            for t in tasks:
-                t.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-        finally:
-            for s in senders:
-                try:
-                    await client._return_exported_sender(s)
-                except Exception:
-                    pass
+        tasks = [asyncio.create_task(_worker()) for _ in range(workers_count)]
+        await queue.join()
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
         return out_path
 
@@ -259,9 +212,7 @@ class FastTelethon:
         workers: int = DEFAULT_WORKERS,
         progress_callback: Optional[Callable[[int, int, float, float], None]] = None
     ) -> Union[InputFileBig, InputFile]:
-        """
-        Faylni Telegram serverlariga parallel oqimlarda (512KB) yuqori tezlikda yuklaydi.
-        """
+        """Faylni Telegram serverlariga 512KB bloklarda parallel oqimlarda maksimal tezlikda yuklaydi."""
         file_path = Path(file_path)
         file_size = file_path.stat().st_size
         file_name = file_path.name
@@ -278,33 +229,9 @@ class FastTelethon:
             return await client.upload_file(str(file_path), progress_callback=_std_up_cb)
 
         part_count = math.ceil(file_size / CHUNK_SIZE)
-        workers_count = min(workers, part_count, 8)
-        is_big = file_size > 10 * 1024 * 1024  # 10 MB dan katta bo'lsa BigFile
+        workers_count = min(workers, part_count, 12)
+        is_big = file_size > 10 * 1024 * 1024
         file_id = utils.get_random_int()
-        dc_id = client.session.dc_id
-
-        senders = []
-        try:
-            for _ in range(workers_count):
-                sender = await client._borrow_exported_sender(dc_id)
-                senders.append(sender)
-        except Exception as e:
-            logger.warning(f"FastTelethon upload sender olishda xato ({e}), standart yuklashga o'tilmoqda.")
-            for s in senders:
-                try:
-                    await client._return_exported_sender(s)
-                except Exception:
-                    pass
-
-            start_time = time.time()
-            def _std_fallback_up_cb(current, total):
-                if progress_callback and total:
-                    elapsed = max(time.time() - start_time, 0.001)
-                    speed = current / elapsed
-                    eta = (total - current) / speed if speed > 0 else 0
-                    progress_callback(current, total, speed, eta)
-
-            return await client.upload_file(str(file_path), progress_callback=_std_fallback_up_cb)
 
         queue = asyncio.Queue()
         for i in range(part_count):
@@ -315,7 +242,7 @@ class FastTelethon:
         start_time = time.time()
         last_progress_time = 0
 
-        async def _upload_worker(sender):
+        async def _upload_worker():
             nonlocal uploaded_bytes, last_progress_time
             with open(file_path, "rb") as fp:
                 while not queue.empty():
@@ -343,13 +270,13 @@ class FastTelethon:
                         )
 
                     success = False
-                    for attempt in range(3):
+                    for attempt in range(4):
                         try:
-                            await sender.send(req)
+                            await client(req)
                             async with lock:
                                 uploaded_bytes += len(chunk_data)
                                 now = time.time()
-                                if progress_callback and (now - last_progress_time >= 1.5 or uploaded_bytes >= file_size):
+                                if progress_callback and (now - last_progress_time >= 1.0 or uploaded_bytes >= file_size):
                                     last_progress_time = now
                                     elapsed = max(now - start_time, 0.001)
                                     speed = uploaded_bytes / elapsed
@@ -361,27 +288,20 @@ class FastTelethon:
                             success = True
                             break
                         except Exception as e:
-                            logger.warning(f"FastTelethon upload part #{part_idx} urinish #{attempt+1} xato: {e}")
-                            await asyncio.sleep(0.5)
+                            logger.warning(f"FastTelethon upload part #{part_idx} urinish #{attempt+1}: {e}")
+                            await asyncio.sleep(0.3)
 
                     if not success:
                         await queue.put(part_idx)
-                        await asyncio.sleep(1.0)
+                        await asyncio.sleep(0.5)
 
                     queue.task_done()
 
-        try:
-            tasks = [asyncio.create_task(_upload_worker(s)) for s in senders]
-            await queue.join()
-            for t in tasks:
-                t.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-        finally:
-            for s in senders:
-                try:
-                    await client._return_exported_sender(s)
-                except Exception:
-                    pass
+        tasks = [asyncio.create_task(_upload_worker()) for _ in range(workers_count)]
+        await queue.join()
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
         if is_big:
             return InputFileBig(id=file_id, parts=part_count, name=file_name)
