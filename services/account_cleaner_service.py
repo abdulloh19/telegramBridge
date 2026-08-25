@@ -258,37 +258,38 @@ class AccountCleanerService:
         if not has_string_session and not session_file.exists():
             return False
 
+        cached = AccountCleanerService.get_cached_profile(user_id)
+
         try:
             async def _check():
                 client = await AccountCleanerService.get_client(user_id)
                 auth = await client.is_user_authorized()
                 if auth:
-                    me = await client.get_me()
-                    if me:
-                        first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
-                        username = f"@{me.username}" if getattr(me, 'username', None) else ""
-                        phone = getattr(me, 'phone', '') or ''
-                        AccountCleanerService.save_profile(user_id, {
-                            "id": me.id,
-                            "name": first_name,
-                            "username": username,
-                            "phone": phone
-                        })
-                        # Sessiya satrini doimiy saqlab qo'yish
-                        try:
+                    try:
+                        me = await client.get_me()
+                        if me:
+                            first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
+                            username = f"@{me.username}" if getattr(me, 'username', None) else ""
+                            phone = getattr(me, 'phone', '') or ''
+                            AccountCleanerService.save_profile(user_id, {
+                                "id": me.id,
+                                "name": first_name,
+                                "username": username,
+                                "phone": phone
+                            })
                             saved_str = client.session.save()
                             if isinstance(saved_str, str) and len(saved_str) > 50:
                                 AccountCleanerService.save_session_string(user_id, saved_str)
-                        except Exception:
-                            pass
-                        return True
-                    return False
+                    except Exception as me_err:
+                        logger.warning(f"Profil ma'lumotlarini olishda xato (zararsiz): {me_err}")
+                    return True
                 return False
 
-            return await asyncio.wait_for(_check(), timeout=4.0)
+            return await asyncio.wait_for(_check(), timeout=8.0)
         except Exception as e:
             logger.warning(f"Avtorizatsiyani tekshirishda xatolik/timeout ({user_id}): {e}")
-            return False
+            return bool(cached and (has_string_session or session_file.exists()))
+
 
 
 
