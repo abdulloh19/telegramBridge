@@ -221,8 +221,15 @@ async def cb_login_qr(callback: CallbackQuery, state: FSMContext):
         async def _wait_qr():
             ok, res = await AccountCleanerService.wait_for_qr_login(user_id, qr_obj)
             if ok:
+                sess_str = AccountCleanerService.get_persisted_session_string(user_id)
+                sess_msg = (
+                    f"\n\n🔑 <b>Sizning doimiy StringSession kalitingiz:</b>\n"
+                    f"<code>{sess_str}</code>\n\n"
+                    f"💡 <i>(Ushbu kalitni Render.com Dashboard ➡️ Environment bo'limiga <code>USER_SESSION_{user_id}</code> nomi bilan qo'ysangiz, server qayta yoqilsa ham hisobingiz umrbod eslab qolinadi!)</i>"
+                ) if sess_str else ""
+
                 await qr_msg.reply(
-                    f"{res}\n\n🎉 <b>Hisobingiz muvaffaqiyatli ulandi!</b>",
+                    f"{res}\n\n🎉 <b>Hisobingiz muvaffaqiyatli ulandi!</b>{sess_msg}",
                     reply_markup=cleaner_main_keyboard(is_auth=True),
                     parse_mode="HTML"
                 )
@@ -270,8 +277,15 @@ async def handle_qr_2fa_input(message: Message, state: FSMContext):
     ok, res = await AccountCleanerService.wait_for_qr_login(user_id, qr_obj, password=password)
     if ok:
         await state.clear()
+        sess_str = AccountCleanerService.get_persisted_session_string(user_id)
+        sess_msg = (
+            f"\n\n🔑 <b>Sizning doimiy StringSession kalitingiz:</b>\n"
+            f"<code>{sess_str}</code>\n\n"
+            f"💡 <i>(Ushbu kalitni Render.com Dashboard ➡️ Environment bo'limiga <code>USER_SESSION_{user_id}</code> nomi bilan qo'ysangiz, server qayta yoqilsa ham hisobingiz umrbod eslab qolinadi!)</i>"
+        ) if sess_str else ""
+
         await status_msg.edit_text(
-            f"{res}\n\n🎉 <b>Hisobingiz muvaffaqiyatli ulandi!</b>",
+            f"{res}\n\n🎉 <b>Hisobingiz muvaffaqiyatli ulandi!</b>{sess_msg}",
             reply_markup=cleaner_main_keyboard(is_auth=True),
             parse_mode="HTML"
         )
@@ -280,6 +294,7 @@ async def handle_qr_2fa_input(message: Message, state: FSMContext):
             f"{res}\n\n<i>Qaytadan parolni kiriting yoki bekor qilish uchun /cancel yuboring:</i>",
             parse_mode="HTML"
         )
+
 
 
 @router.callback_query(F.data.in_({"cl_start_login", "cl_login_phone"}))
@@ -478,11 +493,18 @@ async def handle_2fa_input(message: Message, state: FSMContext):
         ok, res = await AccountCleanerService.complete_sign_in(user_id, phone, code, password=password)
         if ok:
             await state.clear()
+            sess_str = AccountCleanerService.get_persisted_session_string(user_id)
+            sess_msg = (
+                f"\n\n🔑 <b>Sizning doimiy StringSession kalitingiz:</b>\n"
+                f"<code>{sess_str}</code>\n\n"
+                f"💡 <i>(Ushbu kalitni Render.com Dashboard ➡️ Environment bo'limiga <code>USER_SESSION_{user_id}</code> nomi bilan qo'ysangiz, server qayta yoqilsa ham hisobingiz umrbod eslab qolinadi!)</i>"
+            ) if sess_str else ""
             await status_msg.edit_text(
-                f"{res}\n\n🎉 <b>Hisobingiz muvaffaqiyatli ulandi!</b>\nEndi hisobingizni tozalashingiz mumkin:",
+                f"{res}\n\n🎉 <b>Hisobingiz muvaffaqiyatli ulandi!</b>{sess_msg}",
                 reply_markup=cleaner_main_keyboard(is_auth=True),
                 parse_mode="HTML"
             )
+
         else:
             await status_msg.edit_text(
                 f"{res}\n\n<i>Iltimos, 2FA parolingizni tekshirib qaytadan kiriting (Bekor qilish: /cancel):</i>",

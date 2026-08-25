@@ -27,15 +27,14 @@ async def cmd_start(message: Message, state: FSMContext):
 
     profile_line = "👤 <b>Telegram hisob:</b> ⚪ <i>Ulanmagan (/cleaner)</i>\n"
     try:
-        profile = AccountCleanerService.get_cached_profile(user_id)
+        profile = await AccountCleanerService.get_or_fetch_profile(user_id)
         if profile and profile.get("name"):
             p_name = escape_html(profile.get("name", "Foydalanuvchi"))
             p_uname = f" ({profile.get('username')})" if profile.get("username") else ""
             profile_line = f"👤 <b>Ulangan hisob:</b> 🟢 <b>{p_name}</b>{p_uname}\n"
-        else:
-            asyncio.create_task(AccountCleanerService.get_or_fetch_profile(user_id))
     except Exception as e:
         logger.warning(f"Start profile check error: {e}")
+
 
     welcome_text = (
         "🚀 <b>Telegram Video Downloader & Cleaner Botiga Xush Kelibsiz!</b>\n\n"
