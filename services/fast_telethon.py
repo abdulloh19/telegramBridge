@@ -26,7 +26,8 @@ from telethon.tl.types import (
 from utils.logger import logger
 
 CHUNK_SIZE = 512 * 1024  # 512 KB (Telegram MTProto ruxsat bergan eng katta blok hajmi)
-DEFAULT_WORKERS = 4       # Parallel oqimlar / ulanishlar soni
+DEFAULT_WORKERS = 8       # Maksimal parallel oqimlar / ulanishlar soni
+
 
 
 class FastTelethon:

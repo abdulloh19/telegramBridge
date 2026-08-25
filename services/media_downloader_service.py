@@ -141,7 +141,7 @@ class MediaDownloaderService:
                     client=client,
                     media_or_msg=msg,
                     out_path=out_path,
-                    workers=4,
+                    workers=8,
                     progress_callback=_telethon_progress
                 )
 
@@ -209,7 +209,7 @@ class MediaDownloaderService:
                         client=client,
                         media_or_msg=msg,
                         out_path=out_path,
-                        workers=4,
+                        workers=8,
                         progress_callback=_telethon_progress
                     )
                     if actual_path and Path(actual_path).exists():

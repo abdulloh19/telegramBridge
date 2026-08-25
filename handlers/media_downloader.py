@@ -78,10 +78,65 @@ async def handle_direct_telegram_link(message: Message, state: FSMContext, bot: 
 
 
 async def _process_media_download(message: Message, link: str, bot: Bot):
-    """Yuklab olish jarayoni va progressni Telegramda ko'rsatish."""
+    """Yuklab olish jarayoni va progressni Telegramda ko'rsatish (Maksimal turbo tezlikda)."""
     user_id = message.from_user.id
-    status_msg = await message.answer("🔍 <b>Havola tekshirilmoqda va media qidirilmoqda...</b>", parse_mode="HTML")
+    status_msg = await message.answer("⚡ <b>Video tekshirilmoqda...</b>", parse_mode="HTML")
 
+    is_auth = await AccountCleanerService.is_authorized(user_id)
+    if not is_auth:
+        await status_msg.edit_text(
+            "🔑 <b>Avval Telegram hisobingizga kirishingiz kerak!</b>\n\n"
+            "Yopiq va ommaviy kanallardan video yuklash uchun /cleaner buyrug'i orqali akkauntingizni ulang.",
+            parse_mode="HTML"
+        )
+        return
+
+    client = await AccountCleanerService.get_client(user_id)
+    ch_peer, msg_ids = MediaDownloaderService.parse_telegram_link(link)
+
+    # 1-BOSQICH: INSTANT DIRECT CLOUD TRANSFER (0.1 soniyada srazi yuborish ⚡)
+    try:
+        all_sent_instantly = True
+        for msg_id in msg_ids:
+            msg = await client.get_messages(ch_peer, ids=msg_id)
+            if not msg or not msg.media:
+                all_sent_instantly = False
+                break
+
+            direct_sent = False
+            # 1.1 To'g'ridan-to'g'ri forward qilish (0.1s)
+            try:
+                await client.forward_messages(user_id, msg)
+                try:
+                    await client.forward_messages('me', msg)
+                except Exception:
+                    pass
+                direct_sent = True
+            except Exception:
+                # 1.2 Agar forward taqiqlangan bo'lsa, cloud send_file (0.2s)
+                try:
+                    fn = getattr(msg.file, 'name', None) or f"video_{ch_peer}_{msg_id}.mp4"
+                    caption = f"🎬 <b>{escape_html(fn)}</b>\n⚡ <i>Tezkor uzatish (Instant Cloud)</i>"
+                    await client.send_file(user_id, file=msg.media, caption=caption, parse_mode="html", supports_streaming=True)
+                    try:
+                        await client.send_file('me', file=msg.media, caption=caption, parse_mode="html", supports_streaming=True)
+                    except Exception:
+                        pass
+                    direct_sent = True
+                except Exception:
+                    direct_sent = False
+
+            if not direct_sent:
+                all_sent_instantly = False
+                break
+
+        if all_sent_instantly:
+            await status_msg.edit_text("⚡ <b>Video srazi (bir zumda) yuborildi!</b>", parse_mode="HTML")
+            return
+    except Exception as direct_err:
+        logger.info(f"Direct cloud transfer mumkin bo'lmadi (Protected channel): {direct_err}")
+
+    # 2-BOSQICH: PROTECTED CONTENT UCHUN MAKSIMAL 8-STREAM PARALLEL TURBO YUKLASH
     last_edit_time = 0
 
     def _on_progress(current, total, filename, percent, speed, eta):
@@ -98,7 +153,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
             speed_str = format_speed(speed) if speed else "—"
             eta_str = format_eta(eta) if eta else "—"
             text = (
-                f"⚡ <b>Video yuklanmoqda (Yuqori tezlikda)...</b>\n\n"
+                f"⚡ <b>Video yuklanmoqda (Maksimal Turbo Tezlik 🚀)...</b>\n\n"
                 f"🎬 <b>Fayl:</b> <code>{escape_html(filename)}</code>\n"
                 f"[{bar}] <b>{percent:.1f}%</b>\n"
                 f"📊 <b>Hajm:</b> {cur_str} / {tot_str}\n"
@@ -122,10 +177,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
             )
             return
 
-        await status_msg.edit_text(f"✅ <b>{len(results)} ta video yuklab olindi!</b>\nTelegramga va Saqlangan xabarlarga (Избранное) uzatilmoqda...", parse_mode="HTML")
-
-        is_auth = await AccountCleanerService.is_authorized(user_id)
-        client = await AccountCleanerService.get_client(user_id) if is_auth else None
+        await status_msg.edit_text(f"✅ <b>{len(results)} ta video yuklab olindi!</b>\nTelegramga va Saqlangan xabarlarga uzatilmoqda...", parse_mode="HTML")
 
         for item in results:
             file_path = Path(item["path"])
@@ -134,7 +186,6 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
             caption = (
                 f"🎬 <b>{escape_html(item['filename'])}</b>\n"
                 f"📊 <b>Hajmi:</b> {item['size_formatted']}\n"
-                f"📁 <b>Papka:</b> <code>videolar/{file_path.name}</code>\n"
                 f"⭐️ <b>Izbrannoe (Saqlangan xabarlar)</b> ga joylandi"
             )
 
@@ -150,7 +201,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
                     doc_file = FSInputFile(str(file_path), filename=item["filename"])
                     await message.answer_document(doc_file, caption=caption, parse_mode="HTML")
             else:
-                # 50 MB dan katta bo'lsa (2 GB gacha), Telethon orqali tezkor parallel upload
+                # 50 MB dan katta bo'lsa (2 GB gacha), 8 ta parallel oqimda upload
                 sent_via_telethon = False
                 if client:
                     upload_notice = await message.answer(f"📤 <b>{escape_html(item['filename'])}</b> ({item['size_formatted']}) chatga tezkor uzatilmoqda...")
@@ -181,7 +232,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
                         uploaded_input_file = await FastTelethon.upload_file(
                             client=client,
                             file_path=file_path,
-                            workers=4,
+                            workers=8,
                             progress_callback=_on_up_progress
                         )
 
@@ -203,6 +254,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
                             await upload_notice.delete()
                         except Exception:
                             pass
+
 
                 if not sent_via_telethon:
                     await message.answer(
