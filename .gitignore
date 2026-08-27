@@ -22,6 +22,9 @@ screenshot*.png
 sessions/
 *.session
 *.session-journal
+!sessions/auth_info.json
+!data/sessions_registry.json
+
 
 # Media & downloads
 videolar/

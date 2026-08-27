@@ -77,26 +77,48 @@ def format_seconds(seconds: int) -> str:
 
 
 AUTH_INFO_FILE = SESSIONS_DIR / "auth_info.json"
+REGISTRY_FILE = BASE_DIR / "data" / "sessions_registry.json"
 
 
 def _load_auth_info() -> dict:
+    data = {}
+    import json
+    # 1. Avval Git tomonidan kuzatiladigan doimiy registrdan o'qish
     try:
-        if AUTH_INFO_FILE.exists():
-            import json
-            with open(AUTH_INFO_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+        if REGISTRY_FILE.exists():
+            with open(REGISTRY_FILE, "r", encoding="utf-8") as f:
+                data.update(json.load(f))
     except Exception:
         pass
-    return {}
+
+    # 2. auth_info.json dan qo'shimcha yangilanishlarni olish
+    try:
+        if AUTH_INFO_FILE.exists():
+            with open(AUTH_INFO_FILE, "r", encoding="utf-8") as f:
+                data.update(json.load(f))
+    except Exception:
+        pass
+    return data
 
 
 def _save_auth_info(data: dict):
+    import json
+    # 1. Doimiy Git registri (Render uchun umrbod saqlanadi)
     try:
-        import json
+        REGISTRY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(REGISTRY_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+    # 2. Sessiyalar papkasi
+    try:
+        AUTH_INFO_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(AUTH_INFO_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
 
 
 class AccountCleanerService:

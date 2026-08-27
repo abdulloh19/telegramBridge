@@ -37,9 +37,11 @@ async def setup_bot_commands(bot: Bot):
     commands = [
         BotCommand(command="start", description="🚀 Bosh menyuni ochish"),
         BotCommand(command="dl", description="📥 Video yuklash (Private & Public)"),
+        BotCommand(command="ai", description="🧠 AI Video Konspekt & Interview"),
         BotCommand(command="cleaner", description="🧹 Telegram hisobni tozalash"),
         BotCommand(command="help", description="📖 To'liq qo'llanma"),
     ]
+
     await bot.set_my_commands(commands)
 
 

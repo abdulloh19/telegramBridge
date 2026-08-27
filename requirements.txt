@@ -10,3 +10,5 @@ python-socks>=2.4.0
 PySocks>=1.7.1
 qrcode>=8.0
 cryptography>=42.0.0
+google-genai>=0.1.1
+imageio-ffmpeg>=0.6.0

@@ -2,13 +2,14 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 
 def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
-    """Doimiy pastki tezkor menyu tugmalari (Faqat Video Yuklash va Hisobni Tozalash)."""
+    """Doimiy pastki tezkor menyu tugmalari."""
     keyboard = [
         [
             KeyboardButton(text="📥 Video Yuklash"),
-            KeyboardButton(text="🧹 Hisobni Tozalash"),
+            KeyboardButton(text="🧠 AI Video Konspekt"),
         ],
         [
+            KeyboardButton(text="🧹 Hisobni Tozalash"),
             KeyboardButton(text="ℹ️ Qo'llanma / Yordam"),
         ]
     ]
@@ -17,5 +18,5 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
         keyboard=keyboard,
         resize_keyboard=True,
         persistent=True,
-        input_field_placeholder="Tanlang yoki Telegram video linkini tashlang..."
+        input_field_placeholder="Video linkini tashlang yoki menyudan tanlang..."
     )

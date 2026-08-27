@@ -17,5 +17,8 @@ services:
         sync: false
       - key: USER_SESSION_5787141744
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
       - key: PORT
+
         value: 10000

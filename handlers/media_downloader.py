@@ -1,13 +1,22 @@
 import os
+import uuid
 import asyncio
 from pathlib import Path
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, FSInputFile
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    FSInputFile,
+    BufferedInputFile,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from services.media_downloader_service import MediaDownloaderService, VIDEOS_DIR, DOWNLOADS_DIR
 from services.account_cleaner_service import AccountCleanerService
+from services.ai_video_service import AIVideoService
 from services.fast_telethon import FastTelethon
 from keyboards.inline import cleaner_login_methods_keyboard
 from utils.helpers import escape_html, format_bytes, format_speed, format_eta
@@ -15,25 +24,42 @@ from utils.logger import logger
 
 router = Router()
 
+# AI tahlili uchun video/audio xotirasi (token -> dict)
+_AI_MEDIA_CACHE: dict[str, dict] = {}
+_MAX_AI_CACHE = 200
+
+
+def _save_ai_media_token(data: dict) -> str:
+    """Vaqtincha media tokenni saqlaydi (Callback_data 64-bayt chegarasi uchun)."""
+    global _AI_MEDIA_CACHE
+    if len(_AI_MEDIA_CACHE) > _MAX_AI_CACHE:
+        _AI_MEDIA_CACHE.clear()
+    token = uuid.uuid4().hex[:10]
+    _AI_MEDIA_CACHE[token] = data
+    return token
+
 
 class DownloaderStates(StatesGroup):
     waiting_for_media_link = State()
+    waiting_for_ai_link = State()
 
+
+# =====================================================================
+# 1. Buyruqlar: /dl, /ai, /konspekt, /interview va menyu tugmalari
+# =====================================================================
 
 @router.message(Command("dl"), StateFilter("*"))
 @router.message(Command("download_media"), StateFilter("*"))
 @router.message(F.text == "📥 Video Yuklash", StateFilter("*"))
 async def cmd_download_media(message: Message, state: FSMContext, bot: Bot):
-    """Yopiq yoki ochiq Telegram kanallardan video yuklab olish menyusi."""
+    """Yopiq yoki ochiq Telegram kanallardan video yuklab olish."""
     await state.clear()
     args = message.text.split(maxsplit=1)
 
-    # 1. Agar buyruq bilan birga link yuborilgan bo'lsa: /dl https://t.me/c/...
     if len(args) > 1 and "t.me/" in args[1]:
-        await _process_media_download(message, args[1].strip(), bot)
+        await _process_media_download(message, args[1].strip(), bot, auto_ai=False)
         return
 
-    # 2. Havola so'rash
     await state.set_state(DownloaderStates.waiting_for_media_link)
     await message.answer(
         "📥 <b>Telegram Private & Public Video Tezkor Yuklovchi ⚡</b>\n\n"
@@ -42,7 +68,33 @@ async def cmd_download_media(message: Message, state: FSMContext, bot: Bot):
         "• Bitta video: <code>https://t.me/c/1234567890/45</code>\n"
         "• Ketma-ket bir nechta video: <code>https://t.me/c/1234567890/45-50</code>\n"
         "• Ommaviy kanal: <code>https://t.me/kanal_nomi/123</code>\n\n"
-        "<i>⚡ Multi-stream tezkor yuklash texnologiyasi yoqilgan (10-20x tezroq!). Bekor qilish: /cancel</i>",
+        "<i>⚡ Multi-stream 8-oqimli tezkor yuklash yoqilgan! Bekor qilish: /cancel</i>",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+
+@router.message(Command("ai"), StateFilter("*"))
+@router.message(Command("konspekt"), StateFilter("*"))
+@router.message(Command("interview"), StateFilter("*"))
+@router.message(F.text == "🧠 AI Video Konspekt", StateFilter("*"))
+async def cmd_ai_video_konspekt(message: Message, state: FSMContext, bot: Bot):
+    """Videoni yuklab, undan interview savollari va konspektini chiqarish."""
+    await state.clear()
+    args = message.text.split(maxsplit=1)
+
+    if len(args) > 1 and "t.me/" in args[1]:
+        await _process_media_download(message, args[1].strip(), bot, auto_ai=True)
+        return
+
+    await state.set_state(DownloaderStates.waiting_for_ai_link)
+    await message.answer(
+        "🧠 <b>AI Video Konspekt & Interview Tahlilchisi (Gemini 3.6 Flash) ⚡</b>\n\n"
+        "Video havolasini (link) yuboring. Bot videoni yuklab, quyidagilarni tayyorlab beradi:\n"
+        "• 📋 <b>Barcha Interview Savollari & Javoblari</b> (aniq taym-kodlar bilan)\n"
+        "• 📝 <b>Eng Muhim Joylari Konspekti</b> (asosiy tushunchalar, qoidalar va formulalar)\n"
+        "• 💡 <b>Xulosa va Amaliy Maslahatlar</b>\n\n"
+        "<i>Havolani yuboring (Bekor qilish: /cancel):</i>",
         parse_mode="HTML",
         disable_web_page_preview=True
     )
@@ -50,7 +102,6 @@ async def cmd_download_media(message: Message, state: FSMContext, bot: Bot):
 
 @router.message(DownloaderStates.waiting_for_media_link)
 async def handle_media_link_input(message: Message, state: FSMContext, bot: Bot):
-    """Foydalanuvchi yuborgan linkni qabul qilib yuklab berish."""
     if message.text.strip().startswith("/cancel"):
         await state.clear()
         await message.answer("❌ Video yuklash bekor qilindi.")
@@ -58,27 +109,41 @@ async def handle_media_link_input(message: Message, state: FSMContext, bot: Bot)
 
     link = message.text.strip()
     if "t.me/" not in link:
-        await message.answer(
-            "❌ <b>Noto'g'ri havola!</b>\n\n"
-            "Iltimos, Telegram video havolasini yuboring:\n"
-            "Masalan: <code>https://t.me/c/1234567890/45</code>\n\n"
-            "<i>Bekor qilish uchun /cancel yuboring.</i>",
-            parse_mode="HTML"
-        )
+        await message.answer("❌ <b>Noto'g'ri havola!</b>\nIltimos, <code>https://t.me/c/...</code> formatidagi link yuboring:", parse_mode="HTML")
         return
 
     await state.clear()
-    await _process_media_download(message, link, bot)
+    await _process_media_download(message, link, bot, auto_ai=False)
+
+
+@router.message(DownloaderStates.waiting_for_ai_link)
+async def handle_ai_link_input(message: Message, state: FSMContext, bot: Bot):
+    if message.text.strip().startswith("/cancel"):
+        await state.clear()
+        await message.answer("❌ AI tahlil bekor qilindi.")
+        return
+
+    link = message.text.strip()
+    if "t.me/" not in link:
+        await message.answer("❌ <b>Noto'g'ri havola!</b>\nIltimos, Telegram video linkini yuboring:", parse_mode="HTML")
+        return
+
+    await state.clear()
+    await _process_media_download(message, link, bot, auto_ai=True)
 
 
 @router.message(F.text.regexp(r'https?://t\.me/(c/\d+|[a-zA-Z0-9_]+)/\d+'), StateFilter(None))
 async def handle_direct_telegram_link(message: Message, state: FSMContext, bot: Bot):
-    """Foydalanuvchi to'g'ridan-to'g'ri link tashlaganida ham avtomatik yuklash."""
-    await _process_media_download(message, message.text.strip(), bot)
+    """Foydalanuvchi shunchaki video link tashlaganida ham yuklash."""
+    await _process_media_download(message, message.text.strip(), bot, auto_ai=False)
 
 
-async def _process_media_download(message: Message, link: str, bot: Bot):
-    """Yuklab olish jarayoni va progressni Telegramda ko'rsatish (Maksimal turbo tezlikda)."""
+# =====================================================================
+# 2. Asosiy Video Yuklash & AI Integratsiyasi
+# =====================================================================
+
+async def _process_media_download(message: Message, link: str, bot: Bot, auto_ai: bool = False):
+    """Video yuklash, yuborish va AI konspekt opsiyasini taqdim etish."""
     user_id = message.from_user.id
     status_msg = await message.answer("⚡ <b>Video tekshirilmoqda...</b>", parse_mode="HTML")
 
@@ -86,7 +151,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
     if not is_auth:
         await status_msg.edit_text(
             "🔑 <b>Avval Telegram hisobingizga kirishingiz kerak!</b>\n\n"
-            "Yopiq va ommaviy kanallardan video yuklash uchun /cleaner buyrug'i orqali akkauntingizni ulang.",
+            "Yopiq va ommaviy kanallardan video olish uchun /cleaner buyrug'i orqali akkauntingizni ulang.",
             parse_mode="HTML"
         )
         return
@@ -94,9 +159,10 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
     client = await AccountCleanerService.get_client(user_id)
     ch_peer, msg_ids = MediaDownloaderService.parse_telegram_link(link)
 
-    # 1-BOSQICH: INSTANT DIRECT CLOUD TRANSFER (0.1 soniyada srazi yuborish ⚡)
+    # 1-BOSQICH: INSTANT DIRECT CLOUD TRANSFER (0.1 soniyada srazi forward)
     try:
         all_sent_instantly = True
+        instant_msgs = []
         for msg_id in msg_ids:
             msg = await client.get_messages(ch_peer, ids=msg_id)
             if not msg or not msg.media:
@@ -104,7 +170,6 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
                 break
 
             direct_sent = False
-            # 1.1 To'g'ridan-to'g'ri forward qilish (0.1s)
             try:
                 await client.forward_messages(user_id, msg)
                 try:
@@ -113,7 +178,6 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
                     pass
                 direct_sent = True
             except Exception:
-                # 1.2 Agar forward taqiqlangan bo'lsa, cloud send_file (0.2s)
                 try:
                     fn = getattr(msg.file, 'name', None) or f"video_{ch_peer}_{msg_id}.mp4"
                     caption = f"🎬 <b>{escape_html(fn)}</b>\n⚡ <i>Tezkor uzatish (Instant Cloud)</i>"
@@ -126,17 +190,39 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
                 except Exception:
                     direct_sent = False
 
-            if not direct_sent:
+            if direct_sent:
+                instant_msgs.append((msg, getattr(msg.file, 'name', None) or f"video_{msg_id}.mp4"))
+            else:
                 all_sent_instantly = False
                 break
 
-        if all_sent_instantly:
-            await status_msg.edit_text("⚡ <b>Video srazi (bir zumda) yuborildi!</b>", parse_mode="HTML")
+        if all_sent_instantly and instant_msgs:
+            # Agar auto_ai yoqilgan bo'lsa, birinchi videoning konspektini tayyorlash
+            if auto_ai:
+                await status_msg.edit_text("⚡ Video yetkazildi! Endi AI konspekt va interview savollari tayyorlanmoqda...", parse_mode="HTML")
+                raw_msg, raw_title = instant_msgs[0]
+                await _download_and_analyze_msg(status_msg, client, raw_msg, raw_title, user_id)
+            else:
+                raw_msg, raw_title = instant_msgs[0]
+                token = _save_ai_media_token({
+                    "type": "telegram_msg",
+                    "msg": raw_msg,
+                    "title": raw_title
+                })
+                kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="🧠 AI Interview Savollari & Konspekt", callback_data=f"ai_anlz:{token}")
+                ]])
+                await status_msg.edit_text(
+                    "⚡ <b>Video srazi (bir zumda) yetkazildi!</b>\n\n"
+                    "💡 <i>Ushbu videodagi interview savollari va konspektni olishni xohlaysizmi?</i>",
+                    reply_markup=kb,
+                    parse_mode="HTML"
+                )
             return
     except Exception as direct_err:
         logger.info(f"Direct cloud transfer mumkin bo'lmadi (Protected channel): {direct_err}")
 
-    # 2-BOSQICH: PROTECTED CONTENT UCHUN MAKSIMAL 8-STREAM PARALLEL TURBO YUKLASH
+    # 2-BOSQICH: PROTECTED KANAL UCHUN 8-STREAM PARALLEL TURBO YUKLASH
     last_edit_time = 0
 
     def _on_progress(current, total, filename, percent, speed, eta):
@@ -172,12 +258,12 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
         if not results:
             await status_msg.edit_text(
                 "❌ <b>Ko'rsatilgan havolada video yoki media topilmadi!</b>\n"
-                "Iltimos, havolani to'g'ri nusxalaganingizni va akkauntingiz ushbu kanalda borligini tekshiring.",
+                "Iltimos, havola to'g'riligini va hisobingiz kanalda borligini tekshiring.",
                 parse_mode="HTML"
             )
             return
 
-        await status_msg.edit_text(f"✅ <b>{len(results)} ta video yuklab olindi!</b>\nTelegramga va Saqlangan xabarlarga uzatilmoqda...", parse_mode="HTML")
+        await status_msg.edit_text(f"✅ <b>{len(results)} ta video yuklab olindi!</b>\nTelegramga uzatilmoqda...", parse_mode="HTML")
 
         for item in results:
             file_path = Path(item["path"])
@@ -189,53 +275,32 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
                 f"⭐️ <b>Izbrannoe (Saqlangan xabarlar)</b> ga joylandi"
             )
 
-            uploaded_input_file = None
+            token = _save_ai_media_token({
+                "type": "local_file",
+                "path": str(file_path),
+                "title": item["filename"]
+            })
+            ai_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🧠 AI Interview Savollari & Konspekt", callback_data=f"ai_anlz:{token}")
+            ]])
 
-            # 1. Bot chatiga yuborish
             if file_size_mb <= 49.5:
                 try:
                     video_file = FSInputFile(str(file_path), filename=item["filename"])
-                    await message.answer_video(video_file, caption=caption, parse_mode="HTML")
-                except Exception as send_err:
-                    logger.warning(f"Video yuborishda xato, fayl qilib yuborilmoqda: {send_err}")
+                    await message.answer_video(video_file, caption=caption, reply_markup=ai_kb, parse_mode="HTML")
+                except Exception:
                     doc_file = FSInputFile(str(file_path), filename=item["filename"])
-                    await message.answer_document(doc_file, caption=caption, parse_mode="HTML")
+                    await message.answer_document(doc_file, caption=caption, reply_markup=ai_kb, parse_mode="HTML")
             else:
-                # 50 MB dan katta bo'lsa (2 GB gacha), 8 ta parallel oqimda upload
                 sent_via_telethon = False
                 if client:
-                    upload_notice = await message.answer(f"📤 <b>{escape_html(item['filename'])}</b> ({item['size_formatted']}) chatga tezkor uzatilmoqda...")
-                    last_up_time = 0
-
-                    def _on_up_progress(cur, tot, spd, eta):
-                        nonlocal last_up_time
-                        import time
-                        now = time.time()
-                        if now - last_up_time >= 2.0 or cur == tot:
-                            last_up_time = now
-                            percent = (cur / tot) * 100 if tot else 0
-                            bar_len = 10
-                            filled = int(percent / 10)
-                            bar = "█" * filled + "░" * (bar_len - filled)
-                            spd_str = format_speed(spd) if spd else "—"
-                            eta_str = format_eta(eta) if eta else "—"
-                            up_text = (
-                                f"📤 <b>Chatga yuborilmoqda (Tezkor Upload ⚡)...</b>\n\n"
-                                f"🎬 <b>Fayl:</b> <code>{escape_html(item['filename'])}</code>\n"
-                                f"[{bar}] <b>{percent:.1f}%</b>\n"
-                                f"📊 <b>Hajm:</b> {format_bytes(cur)} / {format_bytes(tot)}\n"
-                                f"🚀 <b>Tezlik:</b> {spd_str} | ⏱ <b>Qolgan:</b> {eta_str}"
-                            )
-                            asyncio.create_task(upload_notice.edit_text(up_text, parse_mode="HTML"))
-
+                    upload_notice = await message.answer(f"📤 <b>{escape_html(item['filename'])}</b> chatga uzatilmoqda...")
                     try:
                         uploaded_input_file = await FastTelethon.upload_file(
                             client=client,
                             file_path=file_path,
-                            workers=8,
-                            progress_callback=_on_up_progress
+                            workers=8
                         )
-
                         await client.send_file(
                             user_id,
                             file=uploaded_input_file,
@@ -248,78 +313,144 @@ async def _process_media_download(message: Message, link: str, bot: Bot):
                         except Exception:
                             pass
                         sent_via_telethon = True
+                        await message.answer(
+                            f"🎬 <b>{escape_html(item['filename'])}</b> muvaffaqiyatli yetkazildi!",
+                            reply_markup=ai_kb,
+                            parse_mode="HTML"
+                        )
                     except Exception as telethon_err:
-                        logger.warning(f"Telethon parallel upload xato: {telethon_err}")
+                        logger.warning(f"Telethon upload xatosi: {telethon_err}")
                         try:
                             await upload_notice.delete()
                         except Exception:
                             pass
 
-
                 if not sent_via_telethon:
                     await message.answer(
-                        f"📁 <b>{escape_html(item['filename'])}</b> ({item['size_formatted']})\n\n"
-                        f"📍 Fayl serverda saqlandi: <code>{escape_html(str(file_path))}</code>\n"
-                        f"Uni /files bo'limidan boshqarishingiz mumkin.",
+                        f"📁 <b>{escape_html(item['filename'])}</b> ({item['size_formatted']})\n"
+                        f"Serverda saqlandi: <code>{escape_html(str(file_path))}</code>",
+                        reply_markup=ai_kb,
                         parse_mode="HTML"
                     )
 
-            # 2. Avtomatik tarzda shaxsiy "Saqlangan xabarlar" (Избранное / Saved Messages) ga yuborish
-            if client:
-                saved_to_me = False
-                raw_msg = item.get("msg")
-                # Birinchi urinish: Tezkor forward (0 soniya)
-                if raw_msg:
-                    try:
-                        await client.forward_messages('me', raw_msg)
-                        saved_to_me = True
-                    except Exception:
-                        pass
-
-                # Agar kanal protected bo'lsa yoki forward ishlamasa:
-                if not saved_to_me:
-                    try:
-                        saved_caption = (
-                            f"🎬 <b>{escape_html(item['filename'])}</b>\n"
-                            f"📊 <b>Hajmi:</b> {item['size_formatted']}\n"
-                            f"📁 <b>Loyiha papkasi:</b> <code>videolar/{file_path.name}</code>"
-                        )
-                        # Agar oldingi qadamda fayl allaqachon upload qilingan bo'lsa, qayta yuklamaymiz!
-                        send_target = uploaded_input_file if uploaded_input_file else str(file_path)
-                        await client.send_file(
-                            'me',
-                            file=send_target,
-                            caption=saved_caption,
-                            parse_mode="html",
-                            supports_streaming=True
-                        )
-                    except Exception as me_err:
-                        logger.warning(f"Izbrannoega video yuborishda xato: {me_err}")
+            # Auto AI rejimi
+            if auto_ai:
+                await status_msg.edit_text("🧠 Video yetkazildi! Endi AI konspekt va interview savollari tahlil qilinmoqda...", parse_mode="HTML")
+                await _run_ai_analysis_from_path(status_msg, file_path, item["filename"], user_id)
+                return
 
         await status_msg.delete()
 
     except Exception as e:
         logger.error(f"Video yuklashda xatolik: {e}")
         err_str = str(e)
-        if "Two-steps verification" in err_str or "2FA" in err_str or "password is required" in err_str:
-            err_msg = (
-                "🔒 <b>Ikki bosqichli parol (2FA / Облачный пароль) talab qilinadi!</b>\n\n"
-                "Ushbu Telegram akkauntingizda 2FA paroli yoqilgan.\n"
-                "Iltimos, botda /cleaner buyrug'ini bosing va parolingizni kiritib ulanishni to'liq yakunlang."
-            )
-        elif "ChannelPrivateError" in err_str or "ChatAdminRequiredError" in err_str:
-            err_msg = (
-                "⛔ <b>Kanalga kirish huquqi yo'q!</b>\n\n"
-                "Botga ulangan Telegram akkaunt ushbu yopiq/pulli kanalga a'zo emas.\n"
-                "Iltimos, pulli kanal bor akkauntni /cleaner orqali ulang."
-            )
+        await status_msg.edit_text(f"❌ <b>Yuklab olishda xatolik:</b> {escape_html(err_str)}", parse_mode="HTML")
+
+
+# =====================================================================
+# 3. AI Tahlilchi Callback & Helper Funksiyalar
+# =====================================================================
+
+@router.callback_query(F.data.startswith("ai_anlz:"))
+async def cb_ai_analyze_video(callback: CallbackQuery):
+    """Tugma bosilganda videoni AI orqali tahlil qilish."""
+    await callback.answer("🧠 AI tahlili boshlanmoqda...")
+    token = callback.data.split(":", 1)[1]
+    cached = _AI_MEDIA_CACHE.get(token)
+
+    if not cached:
+        await callback.message.answer("⚠️ Video ma'lumotlari keshdan eskirgan. Iltimos, video linkini qayta tashlang.")
+        return
+
+    status_msg = await callback.message.answer("🧠 <b>Gemini 3.6 Flash AI video tahlilini boshladi...</b>", parse_mode="HTML")
+    user_id = callback.from_user.id
+
+    if cached["type"] == "local_file":
+        file_path = Path(cached["path"])
+        await _run_ai_analysis_from_path(status_msg, file_path, cached.get("title", "video.mp4"), user_id)
+    elif cached["type"] == "telegram_msg":
+        client = await AccountCleanerService.get_client(user_id)
+        raw_msg = cached["msg"]
+        title = cached.get("title", "video.mp4")
+        await _download_and_analyze_msg(status_msg, client, raw_msg, title, user_id)
+
+
+async def _download_and_analyze_msg(status_msg: Message, client, msg, title: str, user_id: int):
+    """Bulutdagi xabarni yuklab, AI bilan tahlil qilish."""
+    try:
+        await status_msg.edit_text("⏳ <b>AI tahlili uchun audio/video yuklanmoqda...</b>", parse_mode="HTML")
+        temp_dir = VIDEOS_DIR / "ai_temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        local_path = temp_dir / f"ai_{title}"
+
+        actual_path = await FastTelethon.download_media(
+            client=client,
+            media_or_msg=msg,
+            out_path=local_path,
+            workers=8
+        )
+        await _run_ai_analysis_from_path(status_msg, Path(actual_path), title, user_id)
+    except Exception as e:
+        logger.error(f"AI yuklashda xatolik: {e}")
+        await status_msg.edit_text(f"❌ <b>AI tahlilida xatolik:</b> {escape_html(str(e))}", parse_mode="HTML")
+
+
+async def _run_ai_analysis_from_path(status_msg: Message, file_path: Path, title: str, user_id: int):
+    """Fayl yo'li orqali AIVideoService ni chaqirish va natijani chiroyli yetkazish."""
+    try:
+        def _prog(txt):
+            asyncio.create_task(status_msg.edit_text(f"<b>{escape_html(txt)}</b>", parse_mode="HTML"))
+
+        result_text = await AIVideoService.analyze_video(file_path, progress_callback=_prog)
+
+        header = f"🎓 <b>VIDEO KONSEPKTI VA INTERVIEW SAVOLLARI</b>\n🎬 <b>Fayl:</b> <code>{escape_html(title)}</code>\n\n"
+
+        # Agar natija bitta xabarga sig'sa (<= 3800 belgi)
+        if len(result_text) + len(header) <= 3800:
+            try:
+                await status_msg.edit_text(header + result_text, parse_mode="Markdown")
+            except Exception:
+                await status_msg.edit_text(header + result_text, parse_mode="HTML")
         else:
-            err_msg = f"❌ <b>Yuklab olishda xatolik:</b> {escape_html(err_str)}"
+            # Uzun bo'lsa, qismlarga bo'lib yuborish
+            await status_msg.edit_text(header, parse_mode="HTML")
+            chunks = _split_long_text(result_text, 3500)
+            for part in chunks:
+                try:
+                    await status_msg.answer(part, parse_mode="Markdown")
+                except Exception:
+                    await status_msg.answer(part)
+                await asyncio.sleep(0.5)
 
-        await status_msg.edit_text(err_msg, parse_mode="HTML")
+            # Qo'shimcha ravishda to'liq konspektni .md fayl sifatida yuborish
+            clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-')).strip()
+            md_file = BufferedInputFile(
+                result_text.encode('utf-8'),
+                filename=f"konspekt_{clean_title}.md"
+            )
+            await status_msg.answer_document(
+                md_file,
+                caption=f"📄 <b>{escape_html(title)}</b> ning to'liq AI konspekt fayli (.md)",
+                parse_mode="HTML"
+            )
 
-    finally:
-        # RAM xotiradagi vaqtincha buferlarni tozalash (Garbage Collector)
-        import gc
-        gc.collect()
+    except Exception as e:
+        logger.error(f"AI video tahlilida xatolik: {e}")
+        await status_msg.edit_text(f"❌ <b>AI tahlilida xatolik yuz berdi:</b> {escape_html(str(e))}", parse_mode="HTML")
 
+
+def _split_long_text(text: str, max_size: int = 3500) -> list[str]:
+    """Uzun matnni paragraflar bo'yicha toza bo'lib beradi."""
+    parts = []
+    lines = text.split("\n")
+    current = ""
+    for line in lines:
+        if len(current) + len(line) + 1 > max_size:
+            if current:
+                parts.append(current.strip())
+            current = line + "\n"
+        else:
+            current += line + "\n"
+    if current.strip():
+        parts.append(current.strip())
+    return parts
