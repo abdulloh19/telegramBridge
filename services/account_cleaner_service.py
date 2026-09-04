@@ -254,6 +254,11 @@ class AccountCleanerService:
                 int(config.TELEGRAM_API_ID),
                 config.TELEGRAM_API_HASH,
                 proxy=proxy,
+                device_model="Desktop",
+                system_version="Windows 11",
+                app_version="5.5.0 x64",
+                lang_code="en",
+                system_lang_code="uz-UZ",
                 connection_retries=10,
                 timeout=25,
                 retry_delay=2,
@@ -464,6 +469,110 @@ class AccountCleanerService:
             return False, f"Kirishda xatolik: {err_text}"
 
     @staticmethod
+    def clean_phone_number(raw_phone: str) -> str:
+        """Telefon raqamni toza xalqaro formatga o'tkazadi (masalan: +998901234567)."""
+        clean = "".join(c for c in raw_phone if c.isdigit() or c == '+').strip()
+        if not clean:
+            return ""
+        if not clean.startswith("+"):
+            if clean.startswith("998") or len(clean) >= 10:
+                clean = "+" + clean
+            elif len(clean) == 9:
+                clean = "+998" + clean
+            else:
+                clean = "+" + clean
+        return clean
+
+    @staticmethod
+    async def login_with_string_session(user_id: int, session_str: str) -> tuple[bool, str]:
+        """Tayyor Telethon StringSession orqali 0 soniyada kirish."""
+        import config
+        from telethon import TelegramClient
+        from telethon.sessions import StringSession
+
+        session_str = session_str.strip()
+        if len(session_str) < 50:
+            return False, "❌ StringSession formati noto'g'ri (juda qisqa)!"
+
+        try:
+            proxy = get_telethon_proxy()
+            temp_client = TelegramClient(
+                StringSession(session_str),
+                int(config.TELEGRAM_API_ID),
+                config.TELEGRAM_API_HASH,
+                proxy=proxy,
+                device_model="Desktop",
+                system_version="Windows 11",
+                app_version="5.5.0 x64",
+                lang_code="en",
+                system_lang_code="uz-UZ",
+                connection_retries=5,
+                timeout=15,
+            )
+            await temp_client.connect()
+            if not await temp_client.is_user_authorized():
+                await temp_client.disconnect()
+                return False, "❌ Ushbu StringSession eskirgan yoki bekor qilingan (not authorized)!"
+
+            me = await temp_client.get_me()
+            first_name = getattr(me, 'first_name', '') or 'Foydalanuvchi'
+            username = f"@{me.username}" if getattr(me, 'username', None) else f"ID: {me.id}"
+            phone = getattr(me, 'phone', '') or ''
+            
+            AccountCleanerService.save_profile(user_id, {
+                "id": me.id,
+                "name": first_name,
+                "username": username,
+                "phone": phone
+            })
+            AccountCleanerService.save_session_string(user_id, session_str)
+
+            # Joriy xotiradagi mijozni yangilash
+            if user_id in AccountCleanerService._clients:
+                try:
+                    await AccountCleanerService._clients[user_id].disconnect()
+                except Exception:
+                    pass
+            AccountCleanerService._clients[user_id] = temp_client
+
+            return True, f"✅ Muvaffaqiyatli ulandi: {first_name} ({username})"
+        except Exception as e:
+            logger.error(f"StringSession bilan kirishda xatolik: {e}")
+            return False, f"❌ Kirishda xatolik: {str(e)}"
+
+    @staticmethod
+    async def resend_auth_code(user_id: int, phone: str) -> tuple[bool, str]:
+        """Telegram tasdiqlash kodini qayta yuborish (SMS orqali)."""
+        from telethon.tl.functions.auth import ResendCodeRequest
+        from telethon.errors import FloodWaitError
+
+        client = await AccountCleanerService.get_client(user_id)
+        phone = AccountCleanerService.clean_phone_number(phone)
+        phone_code_hash = AccountCleanerService._phone_hashes.get(user_id)
+
+        if not phone_code_hash:
+            return False, "⚠️ Avval telefon raqam kiritilishi kerak."
+
+        try:
+            res = await client(ResendCodeRequest(phone=phone, phone_code_hash=phone_code_hash))
+            AccountCleanerService._phone_hashes[user_id] = res.phone_code_hash
+            return True, (
+                "📩 <b>Tasdiqlash kodi qayta yuborildi!</b>\n\n"
+                "Iltimos, telefoningizdagi <b>Telegram ilovasi</b> («Telegram» rasmiy chati) yoki SMS xabarlaringizni tekshiring."
+            )
+        except FloodWaitError as fe:
+            time_str = format_seconds(fe.seconds)
+            return False, f"⏳ Telegram cheklovi (FloodWait)! Iltimos, {time_str} kuting."
+        except Exception as e:
+            err_s = str(e)
+            if "ResendCodeRequest" in err_s or "all available options" in err_s:
+                return True, (
+                    "📲 <b>Telegram ilovangizga allaqachon kod yuborilgan!</b>\n\n"
+                    "Telegram ilovasidagi rasmiy «Telegram» (Service Notifications) chatini oching va kelgan 5 xonali kodni yozing."
+                )
+            return False, f"❌ Kodni qayta yuborishda xatolik: {err_s}"
+
+    @staticmethod
     async def send_auth_code(user_id: int, phone: str) -> tuple[str, str]:
         """Telefon raqamga Telegram tasdiqlash kodini yuboradi va kod qayerga yuborilgani haqida ma'lumot beradi."""
         from telethon.errors import (
@@ -471,6 +580,10 @@ class AccountCleanerService:
             PhoneNumberInvalidError,
             PhoneNumberBannedError,
         )
+
+        phone = AccountCleanerService.clean_phone_number(phone)
+        if not phone:
+            raise ValueError("Telefon raqam noto'g'ri kiritildi! Masalan: +998901234567")
 
         # Yangi urinish uchun eski nofaol ulanishni tozalash
         if not await AccountCleanerService.is_authorized(user_id):
@@ -495,14 +608,14 @@ class AccountCleanerService:
             if "app" in type_name:
                 return (
                     "📲 <b>Kod Telegram ilovangiz ichidagi rasmiy «Telegram» (Service Notifications) chatiga yuborildi!</b>\n\n"
-                    "⚠️ <i>Diqqat: Kod oddiy SMS ga EMAS, aynan Telegram ilovangiz ichiga keldi.</i>\n"
+                    "⚠️ <i>Diqqat: Kod oddiy SMS ga EMAS, aynan telefoningizdagi Telegram ilovasi ichiga keldi.</i>\n"
                     "Telegram ilovasidagi chatlar ro'yxatidan <b>Telegram</b> chatini oching va 5 xonali kodni oling."
                 )
             elif "sms" in type_name:
                 return "📩 <b>Kod telefoningizga oddiy SMS xabar orqali yuborildi.</b>"
             elif "call" in type_name:
                 return "📞 <b>Telegram telefoningizga qo'ng'iroq qilib kodni aytadi.</b>"
-            return "📩 <b>Kod Telegram orqali yuborildi (Telegram chatini yoki SMS ni tekshiring).</b>"
+            return "📩 <b>Kod Telegram orqali yuborildi (Telegram ilovangizdagi Telegram chatini yoki SMS ni tekshiring).</b>"
 
         try:
             result = await client.send_code_request(phone)
@@ -534,10 +647,13 @@ class AccountCleanerService:
                     "Telegram ilovasidagi rasmiy «Telegram» (Service Notifications) chatini oching va kelgan 5 xonali kodni yozing."
                 )
 
-            logger.warning(f"Telegram bilan ulanishda xato, qayta ulanmoqda: {e}")
+            logger.warning(f"Telegram bilan ulanishda xato ({err_text}), sessiyani qayta ishga tushirmoqda...")
             try:
-                await client.connect()
-                result = await client.send_code_request(phone)
+                await AccountCleanerService.reset_unauthorized_session(user_id)
+                new_client = await AccountCleanerService.get_client(user_id)
+                if not new_client.is_connected():
+                    await new_client.connect()
+                result = await new_client.send_code_request(phone)
                 AccountCleanerService._phone_hashes[user_id] = result.phone_code_hash
                 delivery_text = _get_delivery_info(result.type)
                 return result.phone_code_hash, delivery_text

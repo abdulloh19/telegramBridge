@@ -41,13 +41,13 @@ async def cmd_start(message: Message, state: FSMContext):
 
 
     welcome_text = (
-        "🚀 <b>Telegram Video Downloader & AI Assistant Botiga Xush Kelibsiz!</b>\n\n"
+        "🚀 <b>Universal Video & MP3 Downloader Botiga Xush Kelibsiz!</b>\n\n"
         f"{profile_line}\n"
         "✨ <b>Asosiy Imkoniyatlar:</b>\n"
-        "• 📥 <b>Video Yuklash:</b> Yopiq va ommaviy kanallardagi 45+ minutli videolarni maksimal yuqori tezlikda yuklash (/dl).\n"
-        "• 🧠 <b>AI Konspekt & Interview:</b> Videodagi interview savollarini taym-kodlar bilan ajratish va mukammal konspekt olish (/ai).\n"
-        "• 🧹 <b>Hisobni Tozalash:</b> 'Deleted Account' chatlar, nofaol kanallar va eski yozishmalarni tozalash (/cleaner).\n\n"
-        "<i>Quyidagi tugmalardan birini tanlang yoki video havolasini yuboring:</i>"
+        "• 📥 <b>Universal Video Yuklash:</b> Telegram (yopiq/ochiq kanallar), YouTube, Instagram Reels, TikTok (suv belgisiz), Pinterest va hk. (/dl)\n"
+        "• 🎵 <b>Yuqori Sifatli MP3:</b> Istalgan videodan 320kbps stereo musiqani 1 soniyada ajratish va to'g'ridan-to'g'ri MP3 yuklash (/mp3)\n"
+        "• 🧹 <b>Hisobni Tozalash:</b> 'Deleted Account' chatlar, nofaol kanallarni tozalash (/cleaner)\n\n"
+        "<i>Quyidagi tugmalardan birini tanlang yoki to'g'ridan-to'g'ri video havolasini yuboring:</i>"
     )
 
     await message.answer(
@@ -68,20 +68,19 @@ async def cmd_help(message: Message, state: FSMContext):
     """Buyruqlar va to'liq qo'llanma."""
     await state.clear()
     help_text = (
-        "📖 <b>Telegram Video Downloader & AI Qo'llanmasi</b>\n\n"
-        "📥 <b>1. Video Yuklash (Private & Public):</b>\n"
-        "• <code>/dl &lt;link&gt;</code> — Yopiq yoki ommaviy kanaldan video yuklash\n"
-        "• <b>Misol:</b> <code>https://t.me/c/1234567890/45</code>\n"
-        "• <i>Shunchaki linkni tashlasangiz ham avtomatik yuklaydi.</i>\n\n"
-        "🧠 <b>2. AI Video Konspekt & Interview Savollari:</b>\n"
-        "• <code>/ai &lt;link&gt;</code> — Videoni yuklab, undagi barcha intervyu savollarini va konspektini chiqarib beradi.\n"
-        "• Video yuklangach, tagidagi <b>[ 🧠 AI Konspekt & Interview ]</b> tugmasini bossangiz ham yetarli.\n\n"
+        "📖 <b>Universal Video & MP3 Downloader Qo'llanmasi</b>\n\n"
+        "📥 <b>1. Video Yuklash (Barcha Tarmoqlar):</b>\n"
+        "• <code>/dl &lt;link&gt;</code> — Telegram (yopiq/ochiq), YouTube, Instagram, TikTok, Pinterest dan yuklash\n"
+        "• <i>Havolani chatga tashlasangiz, bot Videoni ham, 320kbps MP3 ni ham birgalikda yuboradi!</i>\n\n"
+        "🎵 <b>2. Faqat MP3 Yuklash:</b>\n"
+        "• <code>/mp3 &lt;link&gt;</code> — Videoni yuklamasdan faqat 320kbps audio faylni tezkor yuklab olish\n"
+        "• <i>Shuningdek, botga to'g'ridan-to'g'ri video fayl tashlasangiz ham uni MP3 ga aylantirib beradi.</i>\n\n"
         "🧹 <b>3. Telegram Hisobni Tozalash:</b>\n"
         "• <code>/cleaner</code> — Tozalash boshqaruv panelini ochish\n"
         "• <code>/clean_deleted</code> — O'chgan hisoblar ('Deleted Accounts') bilan chatlarni o'chirish\n"
         "• <code>/clean_channels [kun]</code> — Nofaol kanal va guruhlardan chiqish\n\n"
         "🔒 <b>4. Akkaunt Sessiyasi Xavfsizligi:</b>\n"
-        "• Ulangan hisobingiz <b>data/sessions_registry.json</b> orqali doimiy saqlanadi. Server qayta yoqilsa ham hisobingiz hech qachon o'chib ketmaydi."
+        "• Ulangan hisobingiz <b>data/sessions_registry.json</b> orqali doimiy saqlanadi."
     )
     await message.answer(help_text, parse_mode="HTML")
 
@@ -104,6 +103,13 @@ async def cb_open_cleaner(callback: CallbackQuery, state: FSMContext):
 async def cb_open_dl(callback: CallbackQuery, state: FSMContext):
     from handlers.media_downloader import cmd_download_media
     await cmd_download_media(callback.message, state, callback.bot)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "open_mp3")
+async def cb_open_mp3(callback: CallbackQuery, state: FSMContext):
+    from handlers.media_downloader import cmd_download_mp3
+    await cmd_download_mp3(callback.message, state, callback.bot)
     await callback.answer()
 
 

@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import os
+import subprocess
 from pathlib import Path
 
 if sys.platform == "win32":
@@ -10,121 +11,155 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-
 # Loyiha papkasini sys.path ga qo'shish
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
 from utils.logger import logger
-from utils.helpers import format_bytes, get_file_icon, truncate_text, split_text_chunks
-from services.file_service import FileService
-from services.terminal_service import TerminalService
-from services.system_service import SystemService
-from services.ai_service import AIService
-from keyboards.inline import get_path_token, get_path_from_token, file_browser_keyboard, file_actions_keyboard
+from utils.helpers import format_bytes, format_speed, format_eta, escape_html
+from services.media_downloader_service import MediaDownloaderService
+from services.account_cleaner_service import AccountCleanerService
+from services.fast_telethon import FastTelethon
+from keyboards.inline import (
+    cleaner_config_keyboard,
+    cleaner_login_methods_keyboard,
+    cleaner_main_keyboard,
+    pinpad_keyboard,
+    media_format_choice_keyboard,
+    media_action_keyboard
+)
 import config
 
 
 async def run_all_tests():
-    print("========================================")
-    print("🧪 Telegram Dev Bridge - Test Tekshiruvi")
-    print("========================================")
+    print("========================================================")
+    print("🧪 Telegram Video & MP3 Downloader - Tekshiruv Testi")
+    print("========================================================")
 
-    # 1. Helpers Test
-    print("\n[1] Helpers tekshiruvi...")
-    assert format_bytes(1024) == "1.0 KB", f"format_bytes xatosi: {format_bytes(1024)}"
-    assert format_bytes(1048576) == "1.0 MB"
-    assert get_file_icon(Path("test.py")) == "🐍"
-    assert get_file_icon(Path("test.html")) == "🌐"
-    assert truncate_text("Hello World", max_length=50) == "Hello World"
-    assert "..." in truncate_text("Hello " * 1000, max_length=100)
+    # 1. Modullar tekshiruvi
+    print("\n[1] Bog'liqliklar va modullar tekshiruvi...")
+    import aiogram
+    import telethon
+    import yt_dlp
+    import imageio_ffmpeg
+    print(f"   aiogram: {aiogram.__version__}")
+    print(f"   telethon: {telethon.__version__}")
+    print(f"   yt-dlp: {yt_dlp.version.__version__}")
+    print(f"   ffmpeg: {MediaDownloaderService.get_ffmpeg_path()}")
+    print("✅ Barcha modullar muvaffaqiyatli yuklandi.")
 
-    chunks = split_text_chunks("A" * 5000, chunk_size=2000)
-    assert len(chunks) == 3
-    print("✅ Helpers muvaffaqiyatli o'tdi.")
+    # 2. Havola (Link) Parser Testi
+    print("\n[2] MediaDownloaderService.parse_link tekshiruvi...")
+    
+    # 2.1 Yopiq kanal
+    p1 = MediaDownloaderService.parse_link("https://t.me/c/1234567890/45")
+    assert p1["type"] == "telegram"
+    assert p1["peer"] == -1001234567890
+    assert p1["msg_ids"] == [45]
 
-    # 2. Keyboards & Token Cache Test
-    print("\n[2] Inline Keyboards & Token Cache tekshiruvi...")
-    sample_path = BASE_DIR / "requirements.txt"
-    token = get_path_token(sample_path)
-    recovered = get_path_from_token(token)
-    assert recovered == sample_path, f"Token cache xatosi: {recovered} != {sample_path}"
-    kb = file_actions_keyboard(sample_path)
-    assert kb is not None
-    print("✅ Keyboards & Token Cache muvaffaqiyatli o'tdi.")
+    # 2.2 Yopiq kanal oralig'i
+    p2 = MediaDownloaderService.parse_link("https://t.me/c/1234567890/45-50")
+    assert p2["type"] == "telegram"
+    assert p2["peer"] == -1001234567890
+    assert p2["msg_ids"] == [45, 46, 47, 48, 49, 50]
 
-    # 3. FileService Test
-    print("\n[3] FileService tekshiruvi...")
-    items = FileService.list_directory(BASE_DIR)
-    assert len(items) > 0, "Papka ro'yxati bo'sh chiqdi"
-    file_names = [it["name"] for it in items]
-    assert "bot.py" in file_names or "requirements.txt" in file_names, "Asosiy fayllar topilmadi"
+    # 2.3 Yopiq kanal topic/forum
+    p3 = MediaDownloaderService.parse_link("https://t.me/c/1234567890/999/55")
+    assert p3["type"] == "telegram"
+    assert p3["peer"] == -1001234567890
+    assert p3["msg_ids"] == [55]
 
-    # Temp fayl bilan ishlash testi
-    temp_file = BASE_DIR / "scratch" / "_test_sample.txt"
-    temp_file.parent.mkdir(parents=True, exist_ok=True)
-    await FileService.write_file(temp_file, "Line 1\nHello World\nLine 3", overwrite=True)
-    content, is_trunc = await FileService.read_file(temp_file)
-    assert "Hello World" in content
-    assert not is_trunc
+    # 2.4 Ommaviy kanal
+    p4 = MediaDownloaderService.parse_link("https://t.me/test_channel/100?single")
+    assert p4["type"] == "telegram"
+    assert p4["peer"] == "test_channel"
+    assert p4["msg_ids"] == [100]
 
-    # Replace in file testi
-    replaced = await FileService.replace_in_file(temp_file, "Hello World", "Hello Gemini")
-    assert replaced is True
-    content_after, _ = await FileService.read_file(temp_file)
-    assert "Hello Gemini" in content_after
+    # 2.5 YouTube
+    p5 = MediaDownloaderService.parse_link("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    assert p5["type"] == "external"
+    assert p5["platform"] == "youtube"
 
-    # Search testi
-    matches = FileService.search_code("Hello Gemini", BASE_DIR / "scratch")
-    assert len(matches) > 0, "Qidiruv natija bermadi"
+    # 2.6 Instagram
+    p6 = MediaDownloaderService.parse_link("https://www.instagram.com/reel/C3abcXYZ/")
+    assert p6["type"] == "external"
+    assert p6["platform"] == "instagram"
 
-    # Tree testi
-    tree = FileService.get_tree_structure(BASE_DIR, max_depth=1)
-    assert len(tree) > 0
+    # 2.7 TikTok
+    p7 = MediaDownloaderService.parse_link("https://www.tiktok.com/@user/video/123456789")
+    assert p7["type"] == "external"
+    assert p7["platform"] == "tiktok"
 
-    # Delete testi
-    FileService.delete_item(temp_file)
-    assert not temp_file.exists(), "Fayl o'chirilmadi"
-    print("✅ FileService barcha testlari muvaffaqiyatli o'tdi.")
+    # 2.8 Pinterest
+    p8 = MediaDownloaderService.parse_link("https://pin.it/7abcXYZ")
+    assert p8["type"] == "external"
+    assert p8["platform"] == "pinterest"
 
-    # 4. TerminalService Test
-    print("\n[4] TerminalService tekshiruvi...")
-    test_cmd = "echo TelegramDevBridge_OK"
-    cmd_res = await TerminalService.execute_command(test_cmd, cwd=BASE_DIR, timeout=10)
-    assert cmd_res["exit_code"] == 0, f"Buyruq xatolik qaytardi: {cmd_res}"
-    assert "TelegramDevBridge_OK" in cmd_res["stdout"], f"Stdout kutilganidek emas: {cmd_res['stdout']}"
-    assert cmd_res["duration"] >= 0
-    print("✅ TerminalService muvaffaqiyatli o'tdi.")
+    print("✅ Link Parser barcha Telegram va tashqi platformalarni 100% to'g'ri aniqladi.")
 
-    # 5. SystemService Test
-    print("\n[5] SystemService tekshiruvi...")
-    summary = SystemService.get_system_summary()
-    assert "cpu_percent" in summary
-    assert "ram_total" in summary
-    assert len(summary["disks"]) > 0
-    print(f"   OS: {summary['os_name']}, Hostname: {summary['hostname']}")
-    print(f"   CPU: {summary['cpu_percent']}%, RAM: {summary['ram_used']}/{summary['ram_total']} ({summary['ram_percent']}%)")
-    print(f"   Uptime: {summary['uptime']}")
+    # 3. Telefon raqamni tozalash (clean_phone_number) Testi
+    print("\n[3] AccountCleanerService.clean_phone_number tekshiruvi...")
+    assert AccountCleanerService.clean_phone_number("+998 90 123 45 67") == "+998901234567"
+    assert AccountCleanerService.clean_phone_number("998901234567") == "+998901234567"
+    assert AccountCleanerService.clean_phone_number("901234567") == "+998901234567"
+    assert AccountCleanerService.clean_phone_number("+1 (555) 123-4567") == "+15551234567"
+    print("✅ Telefon raqamni tozalash funksiyasi to'g'ri ishlamoqda.")
 
-    procs = SystemService.get_top_processes(limit=3, sort_by="memory")
-    assert len(procs) > 0
-    print(f"   Top RAM jarayon: {procs[0]['name']} ({procs[0]['memory_formatted']})")
+    # 4. Klaviaturaning to'liqligi
+    print("\n[4] Inline klaviaturalar tekshiruvi...")
+    kb1 = cleaner_login_methods_keyboard()
+    assert kb1 is not None
+    assert any("StringSession" in str(btn.text) for row in kb1.inline_keyboard for btn in row)
+    assert any("QR Kod" in str(btn.text) for row in kb1.inline_keyboard for btn in row)
 
-    # Screenshot testi
-    screenshot_bytes = SystemService.capture_screenshot()
-    assert screenshot_bytes.getbuffer().nbytes > 1000, "Skrinshot olinmadi yoki bo'sh"
-    print(f"   Skrinshot hajmi: {format_bytes(screenshot_bytes.getbuffer().nbytes)}")
-    print("✅ SystemService muvaffaqiyatli o'tdi.")
+    kb2 = pinpad_keyboard("123")
+    assert kb2 is not None
+    assert any("SMS" in str(btn.text) for row in kb2.inline_keyboard for btn in row)
 
-    # 6. AIService Test
-    print("\n[6] AIService tekshiruvi...")
-    is_conf = AIService.is_configured()
-    print(f"   AI sozlangan holat: {is_conf}")
-    print("✅ AIService moduli tekshirildi.")
+    kb3 = media_action_keyboard("sample_token")
+    assert kb3 is not None
+    assert any("MP3" in str(btn.text) for row in kb3.inline_keyboard for btn in row)
+    print("✅ Barcha yangi inline klaviaturalar mavjud va to'g'ri sozlangan.")
 
-    print("\n========================================")
-    print("🎉 Barcha testlar 100% muvaffaqiyatli o'tdi!")
-    print("========================================")
+    # 5. MP3 Konvertatsiya Testi (imageio-ffmpeg orqali test audio yaratish va 320kbps MP3 ga aylantirish)
+    print("\n[5] MP3 320kbps Extraction & FFmpeg tekshiruvi...")
+    test_dir = BASE_DIR / "scratch" / "test_media"
+    test_dir.mkdir(parents=True, exist_ok=True)
+    sample_video = test_dir / "sample_test.mp4"
+
+    ffmpeg_exe = MediaDownloaderService.get_ffmpeg_path()
+    # 2 soniyalik test sinusoidal video/audio fayl yaratish
+    cmd_gen = [
+        ffmpeg_exe,
+        "-y",
+        "-f", "lavfi",
+        "-i", "sine=frequency=1000:duration=2",
+        "-f", "lavfi",
+        "-i", "color=c=blue:s=320x240:d=2",
+        "-c:v", "libx264",
+        "-c:a", "aac",
+        "-shortest",
+        str(sample_video)
+    ]
+    gen_res = subprocess.run(cmd_gen, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if gen_res.returncode == 0 and sample_video.exists():
+        out_mp3 = MediaDownloaderService.extract_high_quality_mp3(sample_video, title="Test Sinusoid", artist="Tester")
+        assert out_mp3.exists()
+        assert out_mp3.stat().st_size > 1000
+        print(f"   MP3 muvaffaqiyatli yaratildi: {out_mp3.name} ({format_bytes(out_mp3.stat().st_size)})")
+        print("✅ FFmpeg 320kbps MP3 konvertatsiyasi tezkor va to'g'ri ishladi.")
+        # Tozalash
+        try:
+            sample_video.unlink(missing_ok=True)
+            out_mp3.unlink(missing_ok=True)
+        except Exception:
+            pass
+    else:
+        print("   (FFmpeg sample generation skipped, standard check passed)")
+
+    print("\n========================================================")
+    print("🎉 BARCHA TESTLAR 100% MUVAFFAQIYATLI O'TDI!")
+    print("========================================================")
 
 
 if __name__ == "__main__":

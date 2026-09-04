@@ -2,8 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Tizim paketlarini o'rnatish
+# Tizim paketlarini o'rnatish (ffmpeg, gcc, git)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
     gcc \
     git \
     && rm -rf /var/lib/apt/lists/*

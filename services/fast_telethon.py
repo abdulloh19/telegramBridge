@@ -126,83 +126,105 @@ class FastTelethon:
             res = await client.download_media(media_or_msg, file=str(out_path), progress_callback=_std_cb)
             return Path(res) if res else out_path
 
-        part_count = math.ceil(file_size / CHUNK_SIZE)
-        workers_count = min(workers, part_count, 12)
+        try:
+            part_count = math.ceil(file_size / CHUNK_SIZE)
+            workers_count = min(workers, part_count, 12)
 
-        queue = asyncio.Queue()
-        for i in range(part_count):
-            queue.put_nowait(i)
+            queue = asyncio.Queue()
+            for i in range(part_count):
+                queue.put_nowait(i)
 
-        downloaded_bytes = 0
-        lock = asyncio.Lock()
-        start_time = time.time()
-        last_progress_time = 0
+            downloaded_bytes = 0
+            lock = asyncio.Lock()
+            start_time = time.time()
+            last_progress_time = 0
+            failed_attempts = 0
 
-        # Fayl hajmini diskda oldindan ajratish
-        with open(out_path, "wb") as f:
-            f.seek(file_size - 1)
-            f.write(b"\0")
+            # Fayl hajmini diskda oldindan ajratish
+            with open(out_path, "wb") as f:
+                f.seek(file_size - 1)
+                f.write(b"\0")
 
-        async def _worker():
-            nonlocal downloaded_bytes, last_progress_time
-            with open(out_path, "r+b") as fp:
-                while not queue.empty():
-                    try:
-                        part_idx = queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-
-                    offset = part_idx * CHUNK_SIZE
-                    limit = CHUNK_SIZE
-
-                    req = GetFileRequest(
-                        location=location,
-                        offset=offset,
-                        limit=limit,
-                        precise=False,
-                        cdn_supported=False
-                    )
-
-                    success = False
-                    for attempt in range(4):
+            async def _worker():
+                nonlocal downloaded_bytes, last_progress_time, failed_attempts
+                with open(out_path, "r+b") as fp:
+                    while not queue.empty():
                         try:
-                            res = await client(req)
-                            data = res.bytes
-                            fp.seek(offset)
-                            fp.write(data)
-
-                            async with lock:
-                                downloaded_bytes += len(data)
-                                now = time.time()
-                                if progress_callback and (now - last_progress_time >= 1.0 or downloaded_bytes >= file_size):
-                                    last_progress_time = now
-                                    elapsed = max(now - start_time, 0.001)
-                                    speed = downloaded_bytes / elapsed
-                                    eta = (file_size - downloaded_bytes) / speed if speed > 0 else 0
-                                    try:
-                                        progress_callback(downloaded_bytes, file_size, speed, eta)
-                                    except Exception:
-                                        pass
-                            success = True
+                            part_idx = queue.get_nowait()
+                        except asyncio.QueueEmpty:
                             break
-                        except Exception as e:
-                            logger.warning(f"FastTelethon Part #{part_idx} urinish #{attempt+1}: {e}")
-                            await asyncio.sleep(0.3)
 
-                    if not success:
-                        logger.error(f"Part #{part_idx} yuklanmadi, qayta navbatga qo'yildi.")
-                        await queue.put(part_idx)
-                        await asyncio.sleep(0.5)
+                        offset = part_idx * CHUNK_SIZE
+                        limit = CHUNK_SIZE
 
-                    queue.task_done()
+                        req = GetFileRequest(
+                            location=location,
+                            offset=offset,
+                            limit=limit,
+                            precise=False,
+                            cdn_supported=False
+                        )
 
-        tasks = [asyncio.create_task(_worker()) for _ in range(workers_count)]
-        await queue.join()
-        for t in tasks:
-            t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+                        success = False
+                        for attempt in range(3):
+                            try:
+                                res = await client(req)
+                                data = res.bytes
+                                fp.seek(offset)
+                                fp.write(data)
 
-        return out_path
+                                async with lock:
+                                    downloaded_bytes += len(data)
+                                    now = time.time()
+                                    if progress_callback and (now - last_progress_time >= 1.0 or downloaded_bytes >= file_size):
+                                        last_progress_time = now
+                                        elapsed = max(now - start_time, 0.001)
+                                        speed = downloaded_bytes / elapsed
+                                        eta = (file_size - downloaded_bytes) / speed if speed > 0 else 0
+                                        try:
+                                            progress_callback(downloaded_bytes, file_size, speed, eta)
+                                        except Exception:
+                                            pass
+                                success = True
+                                break
+                            except Exception as e:
+                                err_s = str(e)
+                                if "FileMigrateError" in err_s or "dc" in err_s.lower():
+                                    failed_attempts += 5
+                                    break
+                                logger.warning(f"FastTelethon Part #{part_idx} urinish #{attempt+1}: {e}")
+                                await asyncio.sleep(0.3)
+
+                        if not success:
+                            failed_attempts += 1
+                            if failed_attempts < 6:
+                                await queue.put(part_idx)
+                                await asyncio.sleep(0.5)
+
+                        queue.task_done()
+
+            tasks = [asyncio.create_task(_worker()) for _ in range(workers_count)]
+            await queue.join()
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+            if failed_attempts >= 6 or not out_path.exists() or out_path.stat().st_size < file_size * 0.95:
+                raise RuntimeError("FastTelethon parallel download to'liq yakunlanmadi, standart yuklashga o'tilmoqda.")
+
+            return out_path
+        except Exception as fast_err:
+            logger.info(f"FastTelethon standart Telethon yuklashga o'tmoqda: {fast_err}")
+            start_time = time.time()
+            def _fallback_cb(current, total):
+                if progress_callback and total:
+                    elapsed = max(time.time() - start_time, 0.001)
+                    speed = current / elapsed
+                    eta = (total - current) / speed if speed > 0 else 0
+                    progress_callback(current, total, speed, eta)
+
+            res = await client.download_media(media_or_msg, file=str(out_path), progress_callback=_fallback_cb)
+            return Path(res) if res else out_path
 
     @classmethod
     async def upload_file(

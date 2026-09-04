@@ -31,6 +31,7 @@ class CleanerStates(StatesGroup):
     waiting_for_code = State()
     waiting_for_2fa = State()
     waiting_for_qr_2fa = State()
+    waiting_for_session_string = State()
 
 
 def _parse_api_credentials(text: str) -> tuple[str | None, str | None]:
@@ -297,6 +298,82 @@ async def handle_qr_2fa_input(message: Message, state: FSMContext):
 
 
 
+@router.callback_query(F.data == "cl_login_string")
+async def cb_login_string(callback: CallbackQuery, state: FSMContext):
+    """StringSession orqali kirish."""
+    if not AccountCleanerService.is_configured():
+        await callback.answer("Avval .env ga TELEGRAM_API_ID va TELEGRAM_API_HASH ni kiriting!", show_alert=True)
+        return
+
+    await state.set_state(CleanerStates.waiting_for_session_string)
+    await callback.answer()
+    await callback.message.answer(
+        "🔑 <b>Telethon StringSession orqali kirish:</b>\n\n"
+        "Agar sizda boshqa bot yoki skriptlardan olingan tayyor <code>StringSession</code> mavjud bo'lsa, "
+        "uni shu yerga yuboring.\n\n"
+        "<i>(Bu usulda hech qanday kod yoki SMS talab etilmaydi, 0 soniyada ulanadi). Bekor qilish: /cancel</i>",
+        parse_mode="HTML"
+    )
+
+
+@router.message(CleanerStates.waiting_for_session_string)
+async def handle_string_session_input(message: Message, state: FSMContext):
+    """Foydalanuvchi yuborgan StringSession ni tekshirish va saqlash."""
+    if message.text.strip().startswith("/cancel"):
+        await state.clear()
+        await message.answer("❌ StringSession orqali kirish bekor qilindi.")
+        return
+
+    # Xavfsizlik uchun chatdan xabarni o'chirish
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    session_str = message.text.strip()
+    user_id = message.from_user.id
+    status_msg = await message.answer("⏳ StringSession tekshirilmoqda...")
+
+    ok, res = await AccountCleanerService.login_with_string_session(user_id, session_str)
+    if ok:
+        await state.clear()
+        await status_msg.edit_text(
+            f"{res}\n\n🎉 <b>Hisobingiz muvaffaqiyatli ulandi!</b>",
+            reply_markup=cleaner_main_keyboard(is_auth=True),
+            parse_mode="HTML"
+        )
+    else:
+        await status_msg.edit_text(
+            f"{res}\n\n<i>Qaytadan to'g'ri StringSession yuboring yoki bekor qilish uchun /cancel yuboring:</i>",
+            parse_mode="HTML"
+        )
+
+
+@router.callback_query(F.data == "cl_resend_sms")
+async def cb_resend_sms(callback: CallbackQuery, state: FSMContext):
+    """SMS orqali kodni qayta so'rash."""
+    data = await state.get_data()
+    phone = data.get("phone", "")
+    user_id = callback.from_user.id
+
+    if not phone:
+        await callback.answer("Telefon raqam topilmadi, qaytadan kiriting.", show_alert=True)
+        return
+
+    await callback.answer("Kod qayta so'ralmoqda...")
+    ok, msg_text = await AccountCleanerService.resend_auth_code(user_id, phone)
+    if ok:
+        await callback.message.edit_text(
+            f"📱 <b>Raqam:</b> <code>{escape_html(phone)}</code>\n\n"
+            f"{msg_text}\n\n"
+            f"<i>Kelgan kodni quyidagi tugmalar orqali bosing:</i>",
+            parse_mode="HTML",
+            reply_markup=pinpad_keyboard("")
+        )
+    else:
+        await callback.message.answer(msg_text, parse_mode="HTML")
+
+
 @router.callback_query(F.data.in_({"cl_start_login", "cl_login_phone"}))
 async def cb_start_login(callback: CallbackQuery, state: FSMContext):
     """Telefon raqam orqali kirish jarayonini boshlash."""
@@ -321,7 +398,12 @@ async def handle_phone_input(message: Message, state: FSMContext):
         await message.answer("❌ Kirish jarayoni bekor qilindi.")
         return
 
-    phone = message.text.strip().replace(" ", "")
+    raw_phone = message.text.strip()
+    phone = AccountCleanerService.clean_phone_number(raw_phone)
+    if not phone:
+        await message.answer("❌ <b>Telefon raqam noto'g'ri!</b>\nIltimos, <code>+998901234567</code> formatida yuboring:", parse_mode="HTML")
+        return
+
     user_id = message.from_user.id
     status_msg = await message.answer("⏳ Tasdiqlash kodi yuborilmoqda...")
 

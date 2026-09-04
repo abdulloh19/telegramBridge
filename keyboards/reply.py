@@ -6,7 +6,7 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
     keyboard = [
         [
             KeyboardButton(text="📥 Video Yuklash"),
-            KeyboardButton(text="🧠 AI Video Konspekt"),
+            KeyboardButton(text="🎵 MP3 Yuklash"),
         ],
         [
             KeyboardButton(text="🧹 Hisobni Tozalash"),

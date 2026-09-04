@@ -1,99 +1,113 @@
 import os
 import uuid
 import asyncio
+import time
 from pathlib import Path
 from aiogram import Router, F, Bot
 from aiogram.types import (
     Message,
     CallbackQuery,
     FSInputFile,
-    BufferedInputFile,
     InlineKeyboardMarkup,
     InlineKeyboardButton
 )
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from services.media_downloader_service import MediaDownloaderService, VIDEOS_DIR, DOWNLOADS_DIR
+from services.media_downloader_service import (
+    MediaDownloaderService,
+    VIDEOS_DIR,
+    DOWNLOADS_DIR,
+    AUDIO_DIR
+)
 from services.account_cleaner_service import AccountCleanerService
-from services.ai_video_service import AIVideoService
 from services.fast_telethon import FastTelethon
-from keyboards.inline import cleaner_login_methods_keyboard
+from keyboards.inline import (
+    cleaner_login_methods_keyboard,
+    media_format_choice_keyboard,
+    media_action_keyboard
+)
 from utils.helpers import escape_html, format_bytes, format_speed, format_eta
 from utils.logger import logger
 
 router = Router()
 
-# AI tahlili uchun video/audio xotirasi (token -> dict)
-_AI_MEDIA_CACHE: dict[str, dict] = {}
-_MAX_AI_CACHE = 200
+# Media xotirasi (token -> dict)
+_MEDIA_CACHE: dict[str, dict] = {}
+_MAX_MEDIA_CACHE = 300
 
 
-def _save_ai_media_token(data: dict) -> str:
+def _save_media_token(data: dict) -> str:
     """Vaqtincha media tokenni saqlaydi (Callback_data 64-bayt chegarasi uchun)."""
-    global _AI_MEDIA_CACHE
-    if len(_AI_MEDIA_CACHE) > _MAX_AI_CACHE:
-        _AI_MEDIA_CACHE.clear()
+    global _MEDIA_CACHE
+    if len(_MEDIA_CACHE) > _MAX_MEDIA_CACHE:
+        _MEDIA_CACHE.clear()
     token = uuid.uuid4().hex[:10]
-    _AI_MEDIA_CACHE[token] = data
+    _MEDIA_CACHE[token] = data
     return token
 
 
 class DownloaderStates(StatesGroup):
     waiting_for_media_link = State()
-    waiting_for_ai_link = State()
+    waiting_for_mp3_link = State()
 
 
 # =====================================================================
-# 1. Buyruqlar: /dl, /ai, /konspekt, /interview va menyu tugmalari
+# 1. Buyruqlar: /dl, /mp3 va menyu tugmalari
 # =====================================================================
 
 @router.message(Command("dl"), StateFilter("*"))
 @router.message(Command("download_media"), StateFilter("*"))
 @router.message(F.text == "📥 Video Yuklash", StateFilter("*"))
+@router.message(F.text == "📥 Video & MP3 Yuklash (Universal)", StateFilter("*"))
 async def cmd_download_media(message: Message, state: FSMContext, bot: Bot):
-    """Yopiq yoki ochiq Telegram kanallardan video yuklab olish."""
+    """Universal video va MP3 yuklash (Telegram, YouTube, Instagram, TikTok, Pinterest va hk.)."""
     await state.clear()
     args = message.text.split(maxsplit=1)
 
-    if len(args) > 1 and "t.me/" in args[1]:
-        await _process_media_download(message, args[1].strip(), bot, auto_ai=False)
+    if len(args) > 1 and ("t.me/" in args[1] or "http://" in args[1] or "https://" in args[1]):
+        await _process_media_download(message, args[1].strip(), bot, force_mp3=False)
         return
 
     await state.set_state(DownloaderStates.waiting_for_media_link)
     await message.answer(
-        "📥 <b>Telegram Private & Public Video Tezkor Yuklovchi ⚡</b>\n\n"
-        "Yopiq (Private) yoki ochiq kanaldagi video xabar havolasini (link) yuboring:\n\n"
-        "<b>Misollar:</b>\n"
-        "• Bitta video: <code>https://t.me/c/1234567890/45</code>\n"
-        "• Ketma-ket bir nechta video: <code>https://t.me/c/1234567890/45-50</code>\n"
-        "• Ommaviy kanal: <code>https://t.me/kanal_nomi/123</code>\n\n"
-        "<i>⚡ Multi-stream 8-oqimli tezkor yuklash yoqilgan! Bekor qilish: /cancel</i>",
+        "📥 <b>Universal Video & MP3 Tezkor Yuklovchi ⚡</b>\n\n"
+        "Istalgan video yoki musiqa havolasini (link) yuboring:\n\n"
+        "<b>Qo'llab-quvvatlanadi:</b>\n"
+        "• 📱 <b>Telegram:</b> Yopiq/ochiq kanallar, darsliklar (<code>https://t.me/c/...</code>)\n"
+        "• ▶️ <b>YouTube:</b> Videolar, Shorts va Musiqalar\n"
+        "• 📸 <b>Instagram:</b> Reels, Post va Videolar\n"
+        "• 🎵 <b>TikTok:</b> Suv belgisiz (No Watermark) videolar\n"
+        "• 📌 <b>Pinterest:</b> Barcha video va animatsiyalar\n"
+        "• 🌐 <b>Boshqa:</b> Facebook, Twitter/X va to'g'ridan-to'g'ri MP4 linklar\n\n"
+        "<i>⚡ Video bilan birga avtomatik 320kbps MP3 audio ham yuboriladi! (Bekor qilish: /cancel)</i>",
         parse_mode="HTML",
         disable_web_page_preview=True
     )
 
 
-@router.message(Command("ai"), StateFilter("*"))
-@router.message(Command("konspekt"), StateFilter("*"))
-@router.message(Command("interview"), StateFilter("*"))
-@router.message(F.text == "🧠 AI Video Konspekt", StateFilter("*"))
-async def cmd_ai_video_konspekt(message: Message, state: FSMContext, bot: Bot):
-    """Videoni yuklab, undan interview savollari va konspektini chiqarish."""
+@router.message(Command("mp3"), StateFilter("*"))
+@router.message(Command("audio"), StateFilter("*"))
+@router.message(F.text == "🎵 MP3 Yuklash", StateFilter("*"))
+async def cmd_download_mp3(message: Message, state: FSMContext, bot: Bot):
+    """To'g'ridan-to'g'ri faqat MP3 audio yuklash bo'limi."""
     await state.clear()
     args = message.text.split(maxsplit=1)
 
-    if len(args) > 1 and "t.me/" in args[1]:
-        await _process_media_download(message, args[1].strip(), bot, auto_ai=True)
+    if len(args) > 1 and ("t.me/" in args[1] or "http://" in args[1] or "https://" in args[1]):
+        await _process_media_download(message, args[1].strip(), bot, force_mp3=True)
         return
 
-    await state.set_state(DownloaderStates.waiting_for_ai_link)
+    await state.set_state(DownloaderStates.waiting_for_mp3_link)
     await message.answer(
-        "🧠 <b>AI Video Konspekt & Interview Tahlilchisi (Gemini 3.6 Flash) ⚡</b>\n\n"
-        "Video havolasini (link) yuboring. Bot videoni yuklab, quyidagilarni tayyorlab beradi:\n"
-        "• 📋 <b>Barcha Interview Savollari & Javoblari</b> (aniq taym-kodlar bilan)\n"
-        "• 📝 <b>Eng Muhim Joylari Konspekti</b> (asosiy tushunchalar, qoidalar va formulalar)\n"
-        "• 💡 <b>Xulosa va Amaliy Maslahatlar</b>\n\n"
+        "🎵 <b>Tezkor MP3 Audio Yuklovchi (320kbps Stereo) ⚡</b>\n\n"
+        "Istalgan video yoki musiqa havolasini yuboring. Bot videoni yuklab o'tirmasdan, "
+        "to'g'ridan-to'g'ri yuqori sifatli 320kbps MP3 musiqasini yetkazib beradi:\n\n"
+        "• 📱 <b>Telegram:</b> Ochiq va yopiq kanallardagi videolar / audolar\n"
+        "• ▶️ <b>YouTube:</b> Video, Shorts va Musiqalar\n"
+        "• 📸 <b>Instagram:</b> Reels va Videolar\n"
+        "• 🎵 <b>TikTok:</b> Audio treklar va musiqalar\n"
+        "• 📌 <b>Pinterest, Facebook va boshqalar</b>\n\n"
         "<i>Havolani yuboring (Bekor qilish: /cancel):</i>",
         parse_mode="HTML",
         disable_web_page_preview=True
@@ -108,138 +122,289 @@ async def handle_media_link_input(message: Message, state: FSMContext, bot: Bot)
         return
 
     link = message.text.strip()
-    if "t.me/" not in link:
-        await message.answer("❌ <b>Noto'g'ri havola!</b>\nIltimos, <code>https://t.me/c/...</code> formatidagi link yuboring:", parse_mode="HTML")
+    if not link.startswith("http://") and not link.startswith("https://") and "t.me/" not in link:
+        await message.answer("❌ <b>Noto'g'ri havola!</b>\nIltimos, video havolasini (link) yuboring:", parse_mode="HTML")
         return
 
     await state.clear()
-    await _process_media_download(message, link, bot, auto_ai=False)
+    await _process_media_download(message, link, bot, force_mp3=False)
 
 
-@router.message(DownloaderStates.waiting_for_ai_link)
-async def handle_ai_link_input(message: Message, state: FSMContext, bot: Bot):
+@router.message(DownloaderStates.waiting_for_mp3_link)
+async def handle_mp3_link_input(message: Message, state: FSMContext, bot: Bot):
     if message.text.strip().startswith("/cancel"):
         await state.clear()
-        await message.answer("❌ AI tahlil bekor qilindi.")
+        await message.answer("❌ MP3 yuklash bekor qilindi.")
         return
 
     link = message.text.strip()
-    if "t.me/" not in link:
-        await message.answer("❌ <b>Noto'g'ri havola!</b>\nIltimos, Telegram video linkini yuboring:", parse_mode="HTML")
+    if not link.startswith("http://") and not link.startswith("https://") and "t.me/" not in link:
+        await message.answer("❌ <b>Noto'g'ri havola!</b>\nIltimos, havola yuboring:", parse_mode="HTML")
         return
 
     await state.clear()
-    await _process_media_download(message, link, bot, auto_ai=True)
-
-
-@router.message(F.text.regexp(r'https?://t\.me/(c/\d+|[a-zA-Z0-9_]+)/\d+'), StateFilter(None))
-async def handle_direct_telegram_link(message: Message, state: FSMContext, bot: Bot):
-    """Foydalanuvchi shunchaki video link tashlaganida ham yuklash."""
-    await _process_media_download(message, message.text.strip(), bot, auto_ai=False)
+    await _process_media_download(message, link, bot, force_mp3=True)
 
 
 # =====================================================================
-# 2. Asosiy Video Yuklash & AI Integratsiyasi
+# 2. To'g'ridan-to'g'ri havolalar va Video xabarlarni tutish
 # =====================================================================
 
-async def _process_media_download(message: Message, link: str, bot: Bot, auto_ai: bool = False):
-    """Video yuklash, yuborish va AI konspekt opsiyasini taqdim etish."""
+@router.message(F.text.regexp(r'https?://[^\s]+'), StateFilter(None))
+async def handle_direct_link_message(message: Message, state: FSMContext, bot: Bot):
+    """Foydalanuvchi chatga shunchaki havola tashlaganida ham avtomatik yuklash."""
+    link = message.text.strip()
+    await _process_media_download(message, link, bot, force_mp3=False)
+
+
+@router.message(F.video | F.video_note | F.audio | (F.document & F.document.mime_type.contains("video")), StateFilter(None))
+async def handle_user_uploaded_media(message: Message, bot: Bot):
+    """Foydalanuvchi botga to'g'ridan-to'g'ri video/audio yuborganida darhol 320kbps MP3 ga aylantirish."""
+    media_obj = message.video or message.video_note or message.audio or message.document
+    file_id = media_obj.file_id
+    file_name = getattr(media_obj, 'file_name', None) or f"video_{message.message_id}.mp4"
+    file_size_mb = getattr(media_obj, 'file_size', 0) / (1024 * 1024)
+
+    # Agar fayl 45MB dan kichik bo'lsa darhol MP3 qilish
+    if file_size_mb <= 45:
+        status_msg = await message.reply("⏳ <b>Video qabul qilindi, 🎵 320kbps MP3 ga aylantirilmoqda...</b>", parse_mode="HTML")
+        try:
+            temp_dir = VIDEOS_DIR / "temp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            bot_file = await bot.get_file(file_id)
+            local_path = temp_dir / f"bot_{file_name}"
+            await bot.download_file(bot_file.file_path, local_path)
+
+            mp3_path = MediaDownloaderService.extract_high_quality_mp3(local_path, title=file_name)
+            token = _save_media_token({
+                "type": "local_file",
+                "path": str(mp3_path),
+                "title": file_name
+            })
+
+            audio_input = FSInputFile(str(mp3_path), filename=mp3_path.name)
+            await message.reply_audio(
+                audio_input,
+                title=file_name,
+                performer="Telegram Dev Bridge",
+                caption=f"🎵 <b>{escape_html(file_name)}</b>\n⚡ <i>320kbps Yuqori Sifatli Stereo MP3</i>",
+                reply_markup=media_action_keyboard(token),
+                parse_mode="HTML"
+            )
+            await status_msg.delete()
+            return
+        except Exception as e:
+            logger.error(f"Faylni MP3 qilishda xato: {e}")
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
+    token = _save_media_token({
+        "type": "telegram_bot_file",
+        "file_id": file_id,
+        "title": file_name,
+        "size_mb": file_size_mb
+    })
+
+    caption = (
+        f"🎬 <b>Qabul qilindi:</b> <code>{escape_html(file_name)}</code> ({file_size_mb:.1f} MB)\n\n"
+        f"<i>Quyidagi tugma orqali 320kbps MP3 ajratib olishingiz mumkin:</i>"
+    )
+
+    await message.reply(caption, reply_markup=media_action_keyboard(token), parse_mode="HTML")
+
+
+# =====================================================================
+# 3. Asosiy Video & MP3 Yuklash Mantiqi
+# =====================================================================
+
+async def _process_media_download(message: Message, link: str, bot: Bot, force_mp3: bool = False):
+    """Universal video va MP3 yuklash protsessi (To'g'ridan-to'g'ri bot chatga yetkazadi)."""
     user_id = message.from_user.id
-    status_msg = await message.answer("⚡ <b>Video tekshirilmoqda...</b>", parse_mode="HTML")
+    status_msg = await message.answer("⚡ <b>Havola tekshirilmoqda...</b>", parse_mode="HTML")
 
+    parsed = MediaDownloaderService.parse_link(link)
+
+    # -------------------------------------------------------------
+    # VARIANT A: TASHQI HAVOLA (YouTube, Instagram, TikTok, Pinterest va hk.)
+    # -------------------------------------------------------------
+    if parsed.get("type") == "external":
+        platform = parsed.get("platform", "online")
+        platform_names = {
+            "youtube": "YouTube ▶️",
+            "instagram": "Instagram 📸",
+            "tiktok": "TikTok 🎵",
+            "pinterest": "Pinterest 📌",
+            "facebook": "Facebook 👥",
+            "twitter": "Twitter / X 🐦",
+            "other": "Web Video 🌐"
+        }
+        p_name = platform_names.get(platform, "Online")
+
+        await status_msg.edit_text(f"🚀 <b>{p_name} orqali yuklanmoqda...</b>", parse_mode="HTML")
+
+        last_edit_time = 0
+        def _ext_progress(current, total, filename, percent, speed, eta):
+            nonlocal last_edit_time
+            now = time.time()
+            if now - last_edit_time >= 2.0 or (total and current >= total):
+                last_edit_time = now
+                bar_len = 10
+                filled = int(percent / 10) if percent <= 100 else 10
+                bar = "█" * filled + "░" * (bar_len - filled)
+                cur_str = format_bytes(current)
+                tot_str = format_bytes(total) if total else "—"
+                speed_str = format_speed(speed) if speed else "—"
+                eta_str = format_eta(eta) if eta else "—"
+                text = (
+                    f"⚡ <b>{p_name} yuklanmoqda...</b>\n\n"
+                    f"🎬 <b>Nomi:</b> <code>{escape_html(filename[:40])}</code>\n"
+                    f"[{bar}] <b>{percent:.1f}%</b>\n"
+                    f"📊 <b>Hajm:</b> {cur_str} / {tot_str}\n"
+                    f"🚀 <b>Tezlik:</b> {speed_str} | ⏱ <b>Qolgan:</b> {eta_str}"
+                )
+                asyncio.create_task(status_msg.edit_text(text, parse_mode="HTML"))
+
+        try:
+            res_data = await MediaDownloaderService.download_external_media(
+                url=link,
+                audio_only=force_mp3,
+                progress_callback=_ext_progress
+            )
+
+            file_path = Path(res_data["path"])
+            title = res_data.get("title", "media")
+            artist = res_data.get("artist", p_name)
+            duration = res_data.get("duration", 0)
+
+            token = _save_media_token({
+                "type": "local_file",
+                "path": str(file_path),
+                "title": title
+            })
+
+            # Agar faqat MP3 so'ralgan bo'lsa
+            if force_mp3 or res_data.get("is_audio"):
+                await status_msg.edit_text("🎵 <b>Audio bot chatga yetkazilmoqda...</b>", parse_mode="HTML")
+                audio_input = FSInputFile(str(file_path), filename=file_path.name)
+                await message.answer_audio(
+                    audio_input,
+                    title=title,
+                    performer=artist,
+                    duration=duration,
+                    caption=f"🎵 <b>{escape_html(title)}</b>\n⚡ <i>320kbps Yuqori Sifatli Audio</i>",
+                    reply_markup=media_action_keyboard(token),
+                    parse_mode="HTML"
+                )
+                await status_msg.delete()
+                return
+
+            # Video va 320kbps MP3 ni BIRGALIKDA botga yuborish
+            await status_msg.edit_text("🎬 <b>Video va 🎵 320kbps MP3 tayyorlanmoqda...</b>", parse_mode="HTML")
+            file_size_mb = file_path.stat().st_size / (1024 * 1024)
+
+            caption = (
+                f"🎬 <b>{escape_html(title)}</b>\n"
+                f"📊 <b>Hajmi:</b> {res_data['size_formatted']} | ⏱ <b>Davomiyligi:</b> {duration // 60}:{duration % 60:02d}\n"
+                f"🌐 <b>Manba:</b> {p_name}"
+            )
+
+            # 1. Videoni to'g'ridan-to'g'ri bot chatga yuborish
+            if file_size_mb <= 49.5:
+                video_input = FSInputFile(str(file_path), filename=file_path.name)
+                try:
+                    await message.answer_video(
+                        video_input,
+                        caption=caption,
+                        duration=duration,
+                        reply_markup=media_action_keyboard(token),
+                        parse_mode="HTML",
+                        supports_streaming=True
+                    )
+                except Exception:
+                    doc_input = FSInputFile(str(file_path), filename=file_path.name)
+                    await message.answer_document(
+                        doc_input,
+                        caption=caption,
+                        reply_markup=media_action_keyboard(token),
+                        parse_mode="HTML"
+                    )
+            else:
+                await message.answer(
+                    f"📁 <b>{escape_html(title)}</b> ({res_data['size_formatted']})\n"
+                    f"Fayl hajmi 50MB dan katta bo'lgani sababli quyidagi tugma orqali MP3 audioisini olishingiz mumkin.",
+                    reply_markup=media_action_keyboard(token),
+                    parse_mode="HTML"
+                )
+
+            # 2. Qo'shimcha 320kbps MP3 Musiqasini DARHOL bot chatga yuborish
+            try:
+                mp3_path = MediaDownloaderService.extract_high_quality_mp3(
+                    file_path,
+                    title=title,
+                    artist=artist
+                )
+                if mp3_path and mp3_path.exists():
+                    mp3_input = FSInputFile(str(mp3_path), filename=mp3_path.name)
+                    mp3_token = _save_media_token({
+                        "type": "local_file",
+                        "path": str(mp3_path),
+                        "title": title
+                    })
+                    await message.answer_audio(
+                        mp3_input,
+                        title=title,
+                        performer=artist,
+                        duration=duration,
+                        caption=f"🎵 <b>{escape_html(title)}</b>\n⚡ <i>320kbps Yuqori Sifatli MP3</i>",
+                        reply_markup=media_action_keyboard(mp3_token),
+                        parse_mode="HTML"
+                    )
+            except Exception as mp3_err:
+                logger.warning(f"Avtomatik MP3 ajratishda xatolik: {mp3_err}")
+
+            await status_msg.delete()
+            return
+
+        except Exception as ext_err:
+            logger.error(f"Tashqi video yuklashda xatolik ({link}): {ext_err}")
+            await status_msg.edit_text(f"❌ <b>Yuklab olishda xatolik:</b> {escape_html(str(ext_err))}", parse_mode="HTML")
+            return
+
+    # -------------------------------------------------------------
+    # VARIANT B: TELEGRAM HAVOLASI (Yopiq / Ochiq Kanallar)
+    # -------------------------------------------------------------
     is_auth = await AccountCleanerService.is_authorized(user_id)
     if not is_auth:
         await status_msg.edit_text(
-            "🔑 <b>Avval Telegram hisobingizga kirishingiz kerak!</b>\n\n"
-            "Yopiq va ommaviy kanallardan video olish uchun /cleaner buyrug'i orqali akkauntingizni ulang.",
-            parse_mode="HTML"
+            "🔑 <b>Yopiq kanallardan video olish uchun Telegram hisobingizga kiring!</b>\n\n"
+            "Darsliklar va yopiq kanallarni yuklash uchun /cleaner buyrug'i orqali hisobingizni ulang "
+            "(📷 <i>QR Kod orqali 1 soniyada ulanish mumkin</i>).",
+            parse_mode="HTML",
+            reply_markup=cleaner_login_methods_keyboard()
         )
         return
 
     client = await AccountCleanerService.get_client(user_id)
-    ch_peer, msg_ids = MediaDownloaderService.parse_telegram_link(link)
 
-    # 1-BOSQICH: INSTANT DIRECT CLOUD TRANSFER (0.1 soniyada srazi forward)
-    try:
-        all_sent_instantly = True
-        instant_msgs = []
-        for msg_id in msg_ids:
-            msg = await client.get_messages(ch_peer, ids=msg_id)
-            if not msg or not msg.media:
-                all_sent_instantly = False
-                break
-
-            direct_sent = False
-            try:
-                await client.forward_messages(user_id, msg)
-                try:
-                    await client.forward_messages('me', msg)
-                except Exception:
-                    pass
-                direct_sent = True
-            except Exception:
-                try:
-                    fn = getattr(msg.file, 'name', None) or f"video_{ch_peer}_{msg_id}.mp4"
-                    caption = f"🎬 <b>{escape_html(fn)}</b>\n⚡ <i>Tezkor uzatish (Instant Cloud)</i>"
-                    await client.send_file(user_id, file=msg.media, caption=caption, parse_mode="html", supports_streaming=True)
-                    try:
-                        await client.send_file('me', file=msg.media, caption=caption, parse_mode="html", supports_streaming=True)
-                    except Exception:
-                        pass
-                    direct_sent = True
-                except Exception:
-                    direct_sent = False
-
-            if direct_sent:
-                instant_msgs.append((msg, getattr(msg.file, 'name', None) or f"video_{msg_id}.mp4"))
-            else:
-                all_sent_instantly = False
-                break
-
-        if all_sent_instantly and instant_msgs:
-            # Agar auto_ai yoqilgan bo'lsa, birinchi videoning konspektini tayyorlash
-            if auto_ai:
-                await status_msg.edit_text("⚡ Video yetkazildi! Endi AI konspekt va interview savollari tayyorlanmoqda...", parse_mode="HTML")
-                raw_msg, raw_title = instant_msgs[0]
-                await _download_and_analyze_msg(status_msg, client, raw_msg, raw_title, user_id)
-            else:
-                raw_msg, raw_title = instant_msgs[0]
-                token = _save_ai_media_token({
-                    "type": "telegram_msg",
-                    "msg": raw_msg,
-                    "title": raw_title
-                })
-                kb = InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(text="🧠 AI Interview Savollari & Konspekt", callback_data=f"ai_anlz:{token}")
-                ]])
-                await status_msg.edit_text(
-                    "⚡ <b>Video srazi (bir zumda) yetkazildi!</b>\n\n"
-                    "💡 <i>Ushbu videodagi interview savollari va konspektni olishni xohlaysizmi?</i>",
-                    reply_markup=kb,
-                    parse_mode="HTML"
-                )
-            return
-    except Exception as direct_err:
-        logger.info(f"Direct cloud transfer mumkin bo'lmadi (Protected channel): {direct_err}")
-
-    # 2-BOSQICH: PROTECTED KANAL UCHUN 8-STREAM PARALLEL TURBO YUKLASH
+    # 8-STREAM PARALLEL TURBO YUKLASH
     last_edit_time = 0
 
     def _on_progress(current, total, filename, percent, speed, eta):
         nonlocal last_edit_time
-        import time
         now = time.time()
         if now - last_edit_time >= 2.0 or current == total:
             last_edit_time = now
             bar_len = 10
-            filled = int(percent / 10)
+            filled = int(percent / 10) if percent <= 100 else 10
             bar = "█" * filled + "░" * (bar_len - filled)
             cur_str = format_bytes(current)
-            tot_str = format_bytes(total)
+            tot_str = format_bytes(total) if total else "—"
             speed_str = format_speed(speed) if speed else "—"
             eta_str = format_eta(eta) if eta else "—"
             text = (
-                f"⚡ <b>Video yuklanmoqda (Maksimal Turbo Tezlik 🚀)...</b>\n\n"
+                f"⚡ <b>Telegram video yuklanmoqda (Turbo Tezlik 🚀)...</b>\n\n"
                 f"🎬 <b>Fayl:</b> <code>{escape_html(filename)}</code>\n"
                 f"[{bar}] <b>{percent:.1f}%</b>\n"
                 f"📊 <b>Hajm:</b> {cur_str} / {tot_str}\n"
@@ -258,49 +423,77 @@ async def _process_media_download(message: Message, link: str, bot: Bot, auto_ai
         if not results:
             await status_msg.edit_text(
                 "❌ <b>Ko'rsatilgan havolada video yoki media topilmadi!</b>\n"
-                "Iltimos, havola to'g'riligini va hisobingiz kanalda borligini tekshiring.",
+                "Iltimos, havola to'g'riligini va hisobingiz ushbu kanalda a'zo ekanligini tekshiring.",
                 parse_mode="HTML"
             )
             return
 
-        await status_msg.edit_text(f"✅ <b>{len(results)} ta video yuklab olindi!</b>\nTelegramga uzatilmoqda...", parse_mode="HTML")
+        await status_msg.edit_text(f"✅ <b>{len(results)} ta media yuklab olindi!</b>\nTo'g'ridan-to'g'ri bot chatga yuborilmoqda...", parse_mode="HTML")
 
         for item in results:
             file_path = Path(item["path"])
             file_size_mb = item["size_bytes"] / (1024 * 1024)
 
+            # Agar faqat MP3 so'ralgan bo'lsa, zudlik bilan 320kbps MP3 ga aylantirish
+            if force_mp3:
+                mp3_path = MediaDownloaderService.extract_high_quality_mp3(file_path, title=item["filename"])
+                mp3_file = FSInputFile(str(mp3_path), filename=mp3_path.name)
+                token = _save_media_token({
+                    "type": "local_file",
+                    "path": str(mp3_path),
+                    "title": item["filename"]
+                })
+                await message.answer_audio(
+                    mp3_file,
+                    title=item["filename"],
+                    caption=f"🎵 <b>{escape_html(item['filename'])}</b>\n⚡ <i>320kbps Yuqori Sifatli Audio</i>",
+                    reply_markup=media_action_keyboard(token),
+                    parse_mode="HTML"
+                )
+                continue
+
             caption = (
                 f"🎬 <b>{escape_html(item['filename'])}</b>\n"
                 f"📊 <b>Hajmi:</b> {item['size_formatted']}\n"
-                f"⭐️ <b>Izbrannoe (Saqlangan xabarlar)</b> ga joylandi"
+                f"⚡ <i>Tezkor yuklandi</i>"
             )
 
-            token = _save_ai_media_token({
+            token = _save_media_token({
                 "type": "local_file",
                 "path": str(file_path),
                 "title": item["filename"]
             })
-            ai_kb = InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="🧠 AI Interview Savollari & Konspekt", callback_data=f"ai_anlz:{token}")
-            ]])
 
+            # 1. Videoni to'g'ridan-to'g'ri bot chatga jo'natish
             if file_size_mb <= 49.5:
                 try:
                     video_file = FSInputFile(str(file_path), filename=item["filename"])
-                    await message.answer_video(video_file, caption=caption, reply_markup=ai_kb, parse_mode="HTML")
+                    await message.answer_video(
+                        video_file,
+                        caption=caption,
+                        reply_markup=media_action_keyboard(token),
+                        parse_mode="HTML",
+                        supports_streaming=True
+                    )
                 except Exception:
                     doc_file = FSInputFile(str(file_path), filename=item["filename"])
-                    await message.answer_document(doc_file, caption=caption, reply_markup=ai_kb, parse_mode="HTML")
+                    await message.answer_document(
+                        doc_file,
+                        caption=caption,
+                        reply_markup=media_action_keyboard(token),
+                        parse_mode="HTML"
+                    )
             else:
                 sent_via_telethon = False
                 if client:
-                    upload_notice = await message.answer(f"📤 <b>{escape_html(item['filename'])}</b> chatga uzatilmoqda...")
+                    upload_notice = await message.answer(f"📤 <b>{escape_html(item['filename'])}</b> bot chatga uzatilmoqda...")
                     try:
                         uploaded_input_file = await FastTelethon.upload_file(
                             client=client,
                             file_path=file_path,
                             workers=8
                         )
+                        # To'g'ridan-to'g'ri user_id ga (bot-user chatga) yuborish (me ga EMAS!)
                         await client.send_file(
                             user_id,
                             file=uploaded_input_file,
@@ -315,7 +508,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot, auto_ai
                         sent_via_telethon = True
                         await message.answer(
                             f"🎬 <b>{escape_html(item['filename'])}</b> muvaffaqiyatli yetkazildi!",
-                            reply_markup=ai_kb,
+                            reply_markup=media_action_keyboard(token),
                             parse_mode="HTML"
                         )
                     except Exception as telethon_err:
@@ -329,15 +522,29 @@ async def _process_media_download(message: Message, link: str, bot: Bot, auto_ai
                     await message.answer(
                         f"📁 <b>{escape_html(item['filename'])}</b> ({item['size_formatted']})\n"
                         f"Serverda saqlandi: <code>{escape_html(str(file_path))}</code>",
-                        reply_markup=ai_kb,
+                        reply_markup=media_action_keyboard(token),
                         parse_mode="HTML"
                     )
 
-            # Auto AI rejimi
-            if auto_ai:
-                await status_msg.edit_text("🧠 Video yetkazildi! Endi AI konspekt va interview savollari tahlil qilinmoqda...", parse_mode="HTML")
-                await _run_ai_analysis_from_path(status_msg, file_path, item["filename"], user_id)
-                return
+            # 2. Videodan keyin avtomatik 320kbps MP3 audioni ham bot chatga yuborish
+            try:
+                mp3_path = MediaDownloaderService.extract_high_quality_mp3(file_path, title=item["filename"])
+                if mp3_path and mp3_path.exists():
+                    mp3_file = FSInputFile(str(mp3_path), filename=mp3_path.name)
+                    mp3_tok = _save_media_token({
+                        "type": "local_file",
+                        "path": str(mp3_path),
+                        "title": item["filename"]
+                    })
+                    await message.answer_audio(
+                        mp3_file,
+                        title=item["filename"],
+                        caption=f"🎵 <b>{escape_html(item['filename'])}</b>\n⚡ <i>320kbps Yuqori Sifatli Audio</i>",
+                        reply_markup=media_action_keyboard(mp3_tok),
+                        parse_mode="HTML"
+                    )
+            except Exception as mp3_err:
+                logger.warning(f"Telegram videodan MP3 ajratishda xatolik: {mp3_err}")
 
         await status_msg.delete()
 
@@ -348,109 +555,69 @@ async def _process_media_download(message: Message, link: str, bot: Bot, auto_ai
 
 
 # =====================================================================
-# 3. AI Tahlilchi Callback & Helper Funksiyalar
+# 4. MP3 Konvertatsiya va Callback Handlerlar
 # =====================================================================
 
-@router.callback_query(F.data.startswith("ai_anlz:"))
-async def cb_ai_analyze_video(callback: CallbackQuery):
-    """Tugma bosilganda videoni AI orqali tahlil qilish."""
-    await callback.answer("🧠 AI tahlili boshlanmoqda...")
+@router.callback_query(F.data.startswith("conv_mp3:"))
+async def cb_convert_to_mp3(callback: CallbackQuery, bot: Bot):
+    """Mavjud videodan 320kbps MP3 audio ajratib yuborish."""
+    await callback.answer("🎵 320kbps MP3 ajratilmoqda...")
     token = callback.data.split(":", 1)[1]
-    cached = _AI_MEDIA_CACHE.get(token)
+    cached = _MEDIA_CACHE.get(token)
 
     if not cached:
-        await callback.message.answer("⚠️ Video ma'lumotlari keshdan eskirgan. Iltimos, video linkini qayta tashlang.")
+        await callback.message.answer("⚠️ Media ma'lumotlari keshdan eskirgan. Iltimos, linkni qayta yuboring.")
         return
 
-    status_msg = await callback.message.answer("🧠 <b>Gemini 3.6 Flash AI video tahlilini boshladi...</b>", parse_mode="HTML")
+    status_msg = await callback.message.answer("🎵 <b>Yuqori sifatli (320kbps) MP3 tayyorlanmoqda...</b>", parse_mode="HTML")
     user_id = callback.from_user.id
 
-    if cached["type"] == "local_file":
-        file_path = Path(cached["path"])
-        await _run_ai_analysis_from_path(status_msg, file_path, cached.get("title", "video.mp4"), user_id)
-    elif cached["type"] == "telegram_msg":
-        client = await AccountCleanerService.get_client(user_id)
-        raw_msg = cached["msg"]
-        title = cached.get("title", "video.mp4")
-        await _download_and_analyze_msg(status_msg, client, raw_msg, title, user_id)
-
-
-async def _download_and_analyze_msg(status_msg: Message, client, msg, title: str, user_id: int):
-    """Bulutdagi xabarni yuklab, AI bilan tahlil qilish."""
     try:
-        await status_msg.edit_text("⏳ <b>AI tahlili uchun audio/video yuklanmoqda...</b>", parse_mode="HTML")
-        temp_dir = VIDEOS_DIR / "ai_temp"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        local_path = temp_dir / f"ai_{title}"
+        file_path = None
+        title = cached.get("title", "audio")
 
-        actual_path = await FastTelethon.download_media(
-            client=client,
-            media_or_msg=msg,
-            out_path=local_path,
-            workers=8
+        # 1. Agar mahalliy fayl bo'lsa
+        if cached["type"] == "local_file":
+            file_path = Path(cached["path"])
+        elif cached["type"] == "telegram_msg":
+            client = await AccountCleanerService.get_client(user_id)
+            temp_dir = VIDEOS_DIR / "temp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            local_path = temp_dir / f"vid_{title}"
+            actual = await FastTelethon.download_media(client, cached["msg"], local_path)
+            file_path = Path(actual)
+        elif cached["type"] == "telegram_bot_file":
+            temp_dir = VIDEOS_DIR / "temp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            bot_file = await bot.get_file(cached["file_id"])
+            local_path = temp_dir / f"bot_{title}"
+            await bot.download_file(bot_file.file_path, local_path)
+            file_path = local_path
+
+        if not file_path or not file_path.exists():
+            await status_msg.edit_text("❌ Video fayl topilmadi!")
+            return
+
+        # 320kbps MP3 ajratish (1-2 soniyada)
+        mp3_path = MediaDownloaderService.extract_high_quality_mp3(file_path, title=title)
+
+        mp3_token = _save_media_token({
+            "type": "local_file",
+            "path": str(mp3_path),
+            "title": title
+        })
+
+        audio_input = FSInputFile(str(mp3_path), filename=mp3_path.name)
+        await callback.message.answer_audio(
+            audio_input,
+            title=title,
+            performer="Telegram Dev Bridge",
+            caption=f"🎵 <b>{escape_html(title)}</b>\n⚡ <i>320kbps Yuqori Sifatli Stereo MP3</i>",
+            reply_markup=media_action_keyboard(mp3_token),
+            parse_mode="HTML"
         )
-        await _run_ai_analysis_from_path(status_msg, Path(actual_path), title, user_id)
-    except Exception as e:
-        logger.error(f"AI yuklashda xatolik: {e}")
-        await status_msg.edit_text(f"❌ <b>AI tahlilida xatolik:</b> {escape_html(str(e))}", parse_mode="HTML")
-
-
-async def _run_ai_analysis_from_path(status_msg: Message, file_path: Path, title: str, user_id: int):
-    """Fayl yo'li orqali AIVideoService ni chaqirish va natijani chiroyli yetkazish."""
-    try:
-        def _prog(txt):
-            asyncio.create_task(status_msg.edit_text(f"<b>{escape_html(txt)}</b>", parse_mode="HTML"))
-
-        result_text = await AIVideoService.analyze_video(file_path, progress_callback=_prog)
-
-        header = f"🎓 <b>VIDEO KONSEPKTI VA INTERVIEW SAVOLLARI</b>\n🎬 <b>Fayl:</b> <code>{escape_html(title)}</code>\n\n"
-
-        # Agar natija bitta xabarga sig'sa (<= 3800 belgi)
-        if len(result_text) + len(header) <= 3800:
-            try:
-                await status_msg.edit_text(header + result_text, parse_mode="Markdown")
-            except Exception:
-                await status_msg.edit_text(header + result_text, parse_mode="HTML")
-        else:
-            # Uzun bo'lsa, qismlarga bo'lib yuborish
-            await status_msg.edit_text(header, parse_mode="HTML")
-            chunks = _split_long_text(result_text, 3500)
-            for part in chunks:
-                try:
-                    await status_msg.answer(part, parse_mode="Markdown")
-                except Exception:
-                    await status_msg.answer(part)
-                await asyncio.sleep(0.5)
-
-            # Qo'shimcha ravishda to'liq konspektni .md fayl sifatida yuborish
-            clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '_', '-')).strip()
-            md_file = BufferedInputFile(
-                result_text.encode('utf-8'),
-                filename=f"konspekt_{clean_title}.md"
-            )
-            await status_msg.answer_document(
-                md_file,
-                caption=f"📄 <b>{escape_html(title)}</b> ning to'liq AI konspekt fayli (.md)",
-                parse_mode="HTML"
-            )
+        await status_msg.delete()
 
     except Exception as e:
-        logger.error(f"AI video tahlilida xatolik: {e}")
-        await status_msg.edit_text(f"❌ <b>AI tahlilida xatolik yuz berdi:</b> {escape_html(str(e))}", parse_mode="HTML")
-
-
-def _split_long_text(text: str, max_size: int = 3500) -> list[str]:
-    """Uzun matnni paragraflar bo'yicha toza bo'lib beradi."""
-    parts = []
-    lines = text.split("\n")
-    current = ""
-    for line in lines:
-        if len(current) + len(line) + 1 > max_size:
-            if current:
-                parts.append(current.strip())
-            current = line + "\n"
-        else:
-            current += line + "\n"
-    if current.strip():
-        parts.append(current.strip())
-    return parts
+        logger.error(f"MP3 ajratishda xatolik: {e}")
+        await status_msg.edit_text(f"❌ <b>MP3 ga aylantirishda xatolik:</b> {escape_html(str(e))}", parse_mode="HTML")

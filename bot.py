@@ -36,8 +36,8 @@ async def setup_bot_commands(bot: Bot):
     """Telegram ilovasida menyu buyruqlarini ro'yxatdan o'tkazish."""
     commands = [
         BotCommand(command="start", description="🚀 Bosh menyuni ochish"),
-        BotCommand(command="dl", description="📥 Video yuklash (Private & Public)"),
-        BotCommand(command="ai", description="🧠 AI Video Konspekt & Interview"),
+        BotCommand(command="dl", description="📥 Video & MP3 yuklash (Telegram, YouTube, Insta, TikTok)"),
+        BotCommand(command="mp3", description="🎵 Faqat MP3 Audio yuklash (320kbps)"),
         BotCommand(command="cleaner", description="🧹 Telegram hisobni tozalash"),
         BotCommand(command="help", description="📖 To'liq qo'llanma"),
     ]
@@ -52,12 +52,13 @@ async def notify_admins_on_startup(bot: Bot):
         return
 
     text = (
-        "🟢 <b>Telegram Video Downloader & Cleaner bot ishga tushdi!</b>\n\n"
-        "⚡ <b>Tayyor:</b>\n"
-        "• 📥 <b>Multi-stream Video Yuklovchi</b> (10-20x tezkor)\n"
-        "• 🧹 <b>Telegram Hisob Tozalovchi</b>\n"
-        "• 🔒 <b>Doimiy StringSession</b> (Akkaunt eslab qolingan)\n\n"
-        "Menyuni ko'rish uchun /start bosing."
+        "🟢 <b>Bot muvaffaqiyatli yangilandi va ishga tushdi! 🚀</b>\n\n"
+        "✨ <b>Yangi Imkoniyatlar:</b>\n"
+        "• 🎵 <b>Alohida MP3 Bo'limi</b> (/mp3 yoki menyudan)\n"
+        "• 📥 <b>To'g'ridan-to'g'ri Bot Chatga Yetkazish</b> (Izbrannoega emas)\n"
+        "• 🎬 + 🎵 <b>Video bilan birga 320kbps MP3 ham keladi</b>\n"
+        "• 🧹 <b>Telegram Hisob Tozalovchi</b> (/cleaner)\n\n"
+        "👉 Yangilangan menyuni ko'rish uchun <b>/start</b> bosing!"
     )
 
     for admin_id in ADMIN_IDS:
