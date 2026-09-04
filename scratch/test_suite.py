@@ -143,7 +143,7 @@ async def run_all_tests():
     ]
     gen_res = subprocess.run(cmd_gen, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if gen_res.returncode == 0 and sample_video.exists():
-        out_mp3 = MediaDownloaderService.extract_high_quality_mp3(sample_video, title="Test Sinusoid", artist="Tester")
+        out_mp3 = await MediaDownloaderService.extract_high_quality_mp3(sample_video, title="Test Sinusoid", artist="Tester")
         assert out_mp3.exists()
         assert out_mp3.stat().st_size > 1000
         print(f"   MP3 muvaffaqiyatli yaratildi: {out_mp3.name} ({format_bytes(out_mp3.stat().st_size)})")

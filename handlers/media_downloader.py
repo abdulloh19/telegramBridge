@@ -175,7 +175,7 @@ async def handle_user_uploaded_media(message: Message, bot: Bot):
             local_path = temp_dir / f"bot_{file_name}"
             await bot.download_file(bot_file.file_path, local_path)
 
-            mp3_path = MediaDownloaderService.extract_high_quality_mp3(local_path, title=file_name)
+            mp3_path = await MediaDownloaderService.extract_high_quality_mp3(local_path, title=file_name)
             token = _save_media_token({
                 "type": "local_file",
                 "path": str(mp3_path),
@@ -340,7 +340,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
 
             # 2. Qo'shimcha 320kbps MP3 Musiqasini DARHOL bot chatga yuborish
             try:
-                mp3_path = MediaDownloaderService.extract_high_quality_mp3(
+                mp3_path = await MediaDownloaderService.extract_high_quality_mp3(
                     file_path,
                     title=title,
                     artist=artist
@@ -436,7 +436,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
 
             # Agar faqat MP3 so'ralgan bo'lsa, zudlik bilan 320kbps MP3 ga aylantirish
             if force_mp3:
-                mp3_path = MediaDownloaderService.extract_high_quality_mp3(file_path, title=item["filename"])
+                mp3_path = await MediaDownloaderService.extract_high_quality_mp3(file_path, title=item["filename"])
                 mp3_file = FSInputFile(str(mp3_path), filename=mp3_path.name)
                 token = _save_media_token({
                     "type": "local_file",
@@ -528,7 +528,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
 
             # 2. Videodan keyin avtomatik 320kbps MP3 audioni ham bot chatga yuborish
             try:
-                mp3_path = MediaDownloaderService.extract_high_quality_mp3(file_path, title=item["filename"])
+                mp3_path = await MediaDownloaderService.extract_high_quality_mp3(file_path, title=item["filename"])
                 if mp3_path and mp3_path.exists():
                     mp3_file = FSInputFile(str(mp3_path), filename=mp3_path.name)
                     mp3_tok = _save_media_token({
@@ -599,7 +599,7 @@ async def cb_convert_to_mp3(callback: CallbackQuery, bot: Bot):
             return
 
         # 320kbps MP3 ajratish (1-2 soniyada)
-        mp3_path = MediaDownloaderService.extract_high_quality_mp3(file_path, title=title)
+        mp3_path = await MediaDownloaderService.extract_high_quality_mp3(file_path, title=title)
 
         mp3_token = _save_media_token({
             "type": "local_file",

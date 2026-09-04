@@ -153,7 +153,7 @@ class MediaDownloaderService:
         return "ffmpeg"
 
     @classmethod
-    def extract_high_quality_mp3(
+    async def extract_high_quality_mp3(
         cls,
         video_path: Path | str,
         output_audio_path: Optional[Path | str] = None,
@@ -161,7 +161,8 @@ class MediaDownloaderService:
         artist: Optional[str] = "Telegram Dev Bridge"
     ) -> Path:
         """
-        Har qanday videodan 320kbps yuqori sifatli stereo MP3 ni 1-2 soniyada ajratib oladi.
+        Har qanday videodan 320kbps yuqori sifatli stereo MP3 ni tezkor va xavfsiz ajratib oladi.
+        Async non-blocking va buffer-deadlock xavfsizligi bilan ta'minlangan.
         """
         video_path = Path(video_path)
         if not video_path.exists():
@@ -178,13 +179,17 @@ class MediaDownloaderService:
 
         cmd = [
             ffmpeg_exe,
+            "-nostdin",
             "-y",
+            "-loglevel", "error",
+            "-threads", "0",
             "-i", str(video_path),
             "-vn",
             "-c:a", "libmp3lame",
             "-b:a", "320k",
             "-ar", "44100",
             "-ac", "2",
+            "-map", "0:a:0?",
         ]
         if title:
             cmd.extend(["-metadata", f"title={title}"])
@@ -193,25 +198,60 @@ class MediaDownloaderService:
         cmd.append(str(output_audio_path))
 
         logger.info(f"MP3 320kbps konvertatsiya boshlandi: {video_path.name}")
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
-        if res.returncode == 0 and output_audio_path.exists() and output_audio_path.stat().st_size > 0:
-            logger.info(f"MP3 tayyorlandi: {output_audio_path.name} ({format_bytes(output_audio_path.stat().st_size)})")
-            return output_audio_path
+        stderr_output = b""
 
-        # Agar libmp3lame xatolik bersa, umumiy MP3 codec bilan urinish
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE
+            )
+            _, stderr_output = await asyncio.wait_for(proc.communicate(), timeout=300)
+
+            if proc.returncode == 0 and output_audio_path.exists() and output_audio_path.stat().st_size > 0:
+                logger.info(f"MP3 tayyorlandi: {output_audio_path.name} ({format_bytes(output_audio_path.stat().st_size)})")
+                return output_audio_path
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise TimeoutError("MP3 konvertatsiya vaqti tugadi (Timeout). Video hajmi juda katta yoki tizim band.")
+        except Exception as e:
+            logger.warning(f"Asosiy MP3 konvertatsiyada xatolik: {e}")
+
+        # Fallback: Agar libmp3lame xatolik bersa, umumiy MP3 codec bilan urinish
         cmd_fallback = [
             ffmpeg_exe,
+            "-nostdin",
             "-y",
+            "-loglevel", "error",
+            "-threads", "0",
             "-i", str(video_path),
             "-vn",
             "-b:a", "320k",
+            "-map", "0:a:0?",
             str(output_audio_path)
         ]
-        res_fb = subprocess.run(cmd_fallback, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
-        if res_fb.returncode == 0 and output_audio_path.exists() and output_audio_path.stat().st_size > 0:
-            return output_audio_path
+        try:
+            proc_fb = await asyncio.create_subprocess_exec(
+                *cmd_fallback,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE
+            )
+            _, stderr_fb = await asyncio.wait_for(proc_fb.communicate(), timeout=300)
+            if proc_fb.returncode == 0 and output_audio_path.exists() and output_audio_path.stat().st_size > 0:
+                logger.info(f"MP3 tayyorlandi (Fallback): {output_audio_path.name}")
+                return output_audio_path
+            if stderr_fb:
+                stderr_output = stderr_fb
+        except Exception as fb_err:
+            logger.warning(f"Fallback MP3 konvertatsiyada xatolik: {fb_err}")
 
-        raise RuntimeError(f"MP3 ga aylantirishda xatolik yuz berdi: {res.stderr.decode('utf-8', errors='ignore')}")
+        err_msg = stderr_output.decode('utf-8', errors='ignore') if stderr_output else "Videoda audio oqim topilmadi yoki fayl buzilgan."
+        raise RuntimeError(f"MP3 ga aylantirishda xatolik yuz berdi: {err_msg}")
 
     @classmethod
     async def download_external_media(
