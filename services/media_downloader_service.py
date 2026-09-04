@@ -275,6 +275,67 @@ class MediaDownloaderService:
         raise RuntimeError("Videodan audio ajratib bo'lmadi. Videoda audio yo'q yoki format qo'llab-quvvatlanmaydi.")
 
     @classmethod
+    async def compress_video_to_size(
+        cls,
+        video_path: Path | str,
+        target_mb: float = 48.0,
+        output_path: Optional[Path | str] = None
+    ) -> Path:
+        """
+        Katta hajmli videoni Bot API 50MB limitiga moslash uchun tezkor siqadi (CRF 28, ultrafast).
+        """
+        video_path = Path(video_path)
+        if not video_path.exists():
+            return video_path
+
+        file_size_mb = video_path.stat().st_size / (1024 * 1024)
+        if file_size_mb <= target_mb:
+            return video_path
+
+        if not output_path:
+            output_path = VIDEOS_DIR / f"bot_{video_path.name}"
+        else:
+            output_path = Path(output_path)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        ffmpeg_exe = cls.get_ffmpeg_path()
+
+        logger.info(f"Katta video siqilmoqda ({file_size_mb:.1f}MB -> <{target_mb}MB): {video_path.name}")
+
+        cmd = [
+            ffmpeg_exe,
+            "-nostdin",
+            "-y",
+            "-loglevel", "error",
+            "-threads", "0",
+            "-i", str(video_path),
+            "-vf", "scale='min(1280,iw)':-2",
+            "-c:v", "libx264",
+            "-crf", "28",
+            "-preset", "ultrafast",
+            "-c:a", "aac",
+            "-b:a", "96k",
+            str(output_path)
+        ]
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=300)
+            if proc.returncode == 0 and output_path.exists() and output_path.stat().st_size > 1000:
+                new_mb = output_path.stat().st_size / (1024 * 1024)
+                logger.info(f"Video muvaffaqiyatli siqildi: {new_mb:.1f}MB")
+                return output_path
+        except Exception as e:
+            logger.warning(f"Video siqishda xatolik: {e}")
+
+        return video_path
+
+    @classmethod
     async def download_external_media(
         cls,
         url: str,
