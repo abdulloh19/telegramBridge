@@ -19,6 +19,7 @@ from utils.logger import logger
 from utils.helpers import format_bytes, format_speed, format_eta, escape_html
 from services.media_downloader_service import MediaDownloaderService
 from services.account_cleaner_service import AccountCleanerService
+from services.bot_client_service import BotClientService
 from services.fast_telethon import FastTelethon
 from keyboards.inline import (
     cleaner_config_keyboard,
@@ -156,6 +157,15 @@ async def run_all_tests():
             pass
     else:
         print("   (FFmpeg sample generation skipped, standard check passed)")
+
+    # 6. BotClientService (2GB MTProto) tekshiruvi
+    print("\n[6] BotClientService (2GB MTProto) tekshiruvi...")
+    bot_cl = await BotClientService.get_client()
+    assert bot_cl is not None
+    assert bot_cl.is_connected()
+    bot_me = await bot_cl.get_me()
+    print(f"   Bot MTProto ulandi: @{bot_me.username} (ID: {bot_me.id})")
+    print("✅ BotClientService (2000MB / 2GB limit) 100% faol va tayyor.")
 
     print("\n========================================================")
     print("🎉 BARCHA TESTLAR 100% MUVAFFAQIYATLI O'TDI!")

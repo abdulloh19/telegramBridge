@@ -21,6 +21,7 @@ from services.media_downloader_service import (
     AUDIO_DIR
 )
 from services.account_cleaner_service import AccountCleanerService
+from services.bot_client_service import BotClientService
 from services.fast_telethon import FastTelethon
 from keyboards.inline import (
     cleaner_login_methods_keyboard,
@@ -310,31 +311,62 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
                 f"🌐 <b>Manba:</b> {p_name}"
             )
 
-            # 1. Videoni to'g'ridan-to'g'ri bot chatga yuborish
-            send_video_path = file_path
-            if file_size_mb > 49.5:
-                await status_msg.edit_text("⚡ <b>Video bot chatga jo'natish uchun tayyorlanmoqda (Optimal sifat)...</b>", parse_mode="HTML")
-                send_video_path = await MediaDownloaderService.compress_video_to_size(file_path, target_mb=48.0)
+            # 1. Videoni to'g'ridan-to'g'ri bot chatga yuborish (Cheklovlarsiz - 2GB gacha!)
+            if file_size_mb <= 45.0:
+                video_input = FSInputFile(str(file_path), filename=file_path.name)
+                try:
+                    await message.answer_video(
+                        video_input,
+                        caption=caption,
+                        duration=duration,
+                        reply_markup=media_action_keyboard(token),
+                        parse_mode="HTML",
+                        supports_streaming=True
+                    )
+                except Exception as vid_err:
+                    logger.warning(f"Video jo'natishda xatolik, hujjat sifatida yuborilmoqda: {vid_err}")
+                    doc_input = FSInputFile(str(file_path), filename=file_path.name)
+                    await message.answer_document(
+                        doc_input,
+                        caption=caption,
+                        reply_markup=media_action_keyboard(token),
+                        parse_mode="HTML"
+                    )
+            else:
+                # Katta video (50MB - 2000MB) ni Bot MTProto orqali chatga yuborish
+                await status_msg.edit_text(f"🚀 <b>Katta hajmli video ({res_data['size_formatted']}) chatga uzatilmoqda (Turbo 2GB ⚡)...</b>", parse_mode="HTML")
 
-            video_input = FSInputFile(str(send_video_path), filename=send_video_path.name)
-            try:
-                await message.answer_video(
-                    video_input,
+                last_edit_time_mt = 0
+                def _mtproto_up_prog(curr, tot, spd, eta):
+                    nonlocal last_edit_time_mt
+                    now = time.time()
+                    if now - last_edit_time_mt >= 2.0 or curr >= tot:
+                        last_edit_time_mt = now
+                        pct = (curr / tot) * 100 if tot else 0
+                        bar_len = 10
+                        filled = int(pct / 10) if pct <= 100 else 10
+                        bar = "█" * filled + "░" * (bar_len - filled)
+                        text = (
+                            f"⚡ <b>Video bot chatga yuklanmoqda...</b>\n\n"
+                            f"🎬 <b>Nomi:</b> <code>{escape_html(title[:40])}</code>\n"
+                            f"[{bar}] <b>{pct:.1f}%</b>\n"
+                            f"📊 <b>Hajm:</b> {format_bytes(curr)} / {format_bytes(tot)}\n"
+                            f"🚀 <b>Tezlik:</b> {format_speed(spd)} | ⏱ <b>Qolgan:</b> {format_eta(eta)}"
+                        )
+                        asyncio.create_task(status_msg.edit_text(text, parse_mode="HTML"))
+
+                sent = await BotClientService.send_file_to_user(
+                    user_id=user_id,
+                    file_path=file_path,
                     caption=caption,
+                    is_video=True,
                     duration=duration,
-                    reply_markup=media_action_keyboard(token),
-                    parse_mode="HTML",
-                    supports_streaming=True
+                    progress_callback=_mtproto_up_prog
                 )
-            except Exception as vid_err:
-                logger.warning(f"Video jo'natishda xatolik, hujjat sifatida yuborilmoqda: {vid_err}")
-                doc_input = FSInputFile(str(send_video_path), filename=send_video_path.name)
-                await message.answer_document(
-                    doc_input,
-                    caption=caption,
-                    reply_markup=media_action_keyboard(token),
-                    parse_mode="HTML"
-                )
+                if not sent:
+                    send_comp = await MediaDownloaderService.compress_video_to_size(file_path, target_mb=48.0)
+                    doc_input = FSInputFile(str(send_comp), filename=send_comp.name)
+                    await message.answer_document(doc_input, caption=caption, parse_mode="HTML")
 
             # 2. Qo'shimcha 320kbps MP3 Musiqasini DARHOL bot chatga yuborish
             try:
@@ -462,16 +494,10 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
                 "title": item["filename"]
             })
 
-            # 1. Videoni to'g'ridan-to'g'ri bot chatga jo'natish
-            send_video_path = file_path
-            if file_size_mb > 49.5:
-                await status_msg.edit_text("⚡ <b>Video bot chatga jo'natish uchun tayyorlanmoqda (Optimal sifat)...</b>", parse_mode="HTML")
-                send_video_path = await MediaDownloaderService.compress_video_to_size(file_path, target_mb=48.0)
-
-            cur_mb = send_video_path.stat().st_size / (1024 * 1024)
-            if cur_mb <= 49.5:
+            # 1. Videoni to'g'ridan-to'g'ri bot chatga jo'natish (Cheklovlarsiz - 2GB gacha!)
+            if file_size_mb <= 45.0:
                 try:
-                    video_file = FSInputFile(str(send_video_path), filename=item["filename"])
+                    video_file = FSInputFile(str(file_path), filename=item["filename"])
                     await message.answer_video(
                         video_file,
                         caption=caption,
@@ -481,7 +507,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
                     )
                 except Exception as vid_err:
                     logger.warning(f"Telegram video yuborishda xatolik: {vid_err}")
-                    doc_file = FSInputFile(str(send_video_path), filename=item["filename"])
+                    doc_file = FSInputFile(str(file_path), filename=item["filename"])
                     await message.answer_document(
                         doc_file,
                         caption=caption,
@@ -489,16 +515,39 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
                         parse_mode="HTML"
                     )
             else:
-                doc_file = FSInputFile(str(send_video_path), filename=item["filename"])
-                try:
-                    await message.answer_document(
-                        doc_file,
-                        caption=caption,
-                        reply_markup=media_action_keyboard(token),
-                        parse_mode="HTML"
-                    )
-                except Exception:
-                    pass
+                # Katta video (50MB - 2000MB) ni Bot MTProto orqali chatga yuborish
+                await status_msg.edit_text(f"🚀 <b>Katta hajmli video ({item['size_formatted']}) chatga uzatilmoqda (Turbo 2GB ⚡)...</b>", parse_mode="HTML")
+
+                last_edit_time_mt = 0
+                def _tg_up_prog(curr, tot, spd, eta):
+                    nonlocal last_edit_time_mt
+                    now = time.time()
+                    if now - last_edit_time_mt >= 2.0 or curr >= tot:
+                        last_edit_time_mt = now
+                        pct = (curr / tot) * 100 if tot else 0
+                        bar_len = 10
+                        filled = int(pct / 10) if pct <= 100 else 10
+                        bar = "█" * filled + "░" * (bar_len - filled)
+                        text = (
+                            f"⚡ <b>Telegram video chatga yuklanmoqda...</b>\n\n"
+                            f"🎬 <b>Nomi:</b> <code>{escape_html(item['filename'][:40])}</code>\n"
+                            f"[{bar}] <b>{pct:.1f}%</b>\n"
+                            f"📊 <b>Hajm:</b> {format_bytes(curr)} / {format_bytes(tot)}\n"
+                            f"🚀 <b>Tezlik:</b> {format_speed(spd)} | ⏱ <b>Qolgan:</b> {format_eta(eta)}"
+                        )
+                        asyncio.create_task(status_msg.edit_text(text, parse_mode="HTML"))
+
+                sent = await BotClientService.send_file_to_user(
+                    user_id=user_id,
+                    file_path=file_path,
+                    caption=caption,
+                    is_video=True,
+                    progress_callback=_tg_up_prog
+                )
+                if not sent:
+                    send_comp = await MediaDownloaderService.compress_video_to_size(file_path, target_mb=48.0)
+                    doc_file = FSInputFile(str(send_comp), filename=send_comp.name)
+                    await message.answer_document(doc_file, caption=caption, parse_mode="HTML")
 
             # 2. Videodan keyin avtomatik 320kbps MP3 audioni ham bot chatga yuborish
             try:
