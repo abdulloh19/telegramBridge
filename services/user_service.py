@@ -45,12 +45,37 @@ class UserService:
     @classmethod
     def get_all_user_ids(cls) -> list[int]:
         """Barcha ro'yxatdan o'tgan foydalanuvchilar va adminlar ID larini qaytaradi."""
-        from config import ADMIN_IDS
+        from config import ADMIN_IDS, BASE_DIR
         users = cls._load_users()
         ids = set(ADMIN_IDS)
         for uid in users.keys():
             if uid.isdigit():
                 ids.add(int(uid))
+
+        # 1. sessions_registry.json
+        sess_file = BASE_DIR / "data" / "sessions_registry.json"
+        if sess_file.exists():
+            try:
+                with open(sess_file, "r", encoding="utf-8") as f:
+                    reg_data = json.load(f)
+                    for uid in reg_data.keys():
+                        if str(uid).isdigit():
+                            ids.add(int(uid))
+            except Exception:
+                pass
+
+        # 2. tgbot/data/users.json
+        tgbot_users = BASE_DIR.parent / "tgbot" / "data" / "users.json"
+        if tgbot_users.exists():
+            try:
+                with open(tgbot_users, "r", encoding="utf-8") as f:
+                    t_data = json.load(f)
+                    for uid in t_data.keys():
+                        if str(uid).isdigit():
+                            ids.add(int(uid))
+            except Exception:
+                pass
+
         return list(ids)
 
     @classmethod

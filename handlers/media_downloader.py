@@ -333,40 +333,62 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
                         parse_mode="HTML"
                     )
             else:
-                # Katta video (50MB - 2000MB) ni Bot MTProto orqali chatga yuborish
-                await status_msg.edit_text(f"🚀 <b>Katta hajmli video ({res_data['size_formatted']}) chatga uzatilmoqda (Turbo 2GB ⚡)...</b>", parse_mode="HTML")
+                # Katta hajmli video (50MB - 2000MB va undan ortiq) - Cheklovlarsiz yuklash
+                # Agar fayl Telegram MTProto ning 1950MB limitidan oshsa, sifatni yo'qotmasdan qismlarga bo'lish
+                if file_size_mb > 1950.0:
+                    await status_msg.edit_text(
+                        f"⚡ <b>Video hajmi juda katta ({res_data['size_formatted']})...</b>\n"
+                        f"Sifatini zarracha yo'qotmasdan qismlarga ajratilib, to'liq yetkazilmoqda...",
+                        parse_mode="HTML"
+                    )
+                    video_parts = await MediaDownloaderService.split_large_video_lossless(file_path)
+                else:
+                    video_parts = [file_path]
 
-                last_edit_time_mt = 0
-                def _mtproto_up_prog(curr, tot, spd, eta):
-                    nonlocal last_edit_time_mt
-                    now = time.time()
-                    if now - last_edit_time_mt >= 2.0 or curr >= tot:
-                        last_edit_time_mt = now
-                        pct = (curr / tot) * 100 if tot else 0
-                        bar_len = 10
-                        filled = int(pct / 10) if pct <= 100 else 10
-                        bar = "█" * filled + "░" * (bar_len - filled)
-                        text = (
-                            f"⚡ <b>Video bot chatga yuklanmoqda...</b>\n\n"
-                            f"🎬 <b>Nomi:</b> <code>{escape_html(title[:40])}</code>\n"
-                            f"[{bar}] <b>{pct:.1f}%</b>\n"
-                            f"📊 <b>Hajm:</b> {format_bytes(curr)} / {format_bytes(tot)}\n"
-                            f"🚀 <b>Tezlik:</b> {format_speed(spd)} | ⏱ <b>Qolgan:</b> {format_eta(eta)}"
-                        )
-                        asyncio.create_task(status_msg.edit_text(text, parse_mode="HTML"))
+                for p_idx, v_part in enumerate(video_parts, 1):
+                    part_label = f" (Qism {p_idx}/{len(video_parts)})" if len(video_parts) > 1 else ""
+                    part_caption = f"{caption}{part_label}"
+                    await status_msg.edit_text(
+                        f"🚀 <b>Video chatga uzatilmoqda (Turbo 2GB ⚡){part_label}...</b>",
+                        parse_mode="HTML"
+                    )
 
-                sent = await BotClientService.send_file_to_user(
-                    user_id=user_id,
-                    file_path=file_path,
-                    caption=caption,
-                    is_video=True,
-                    duration=duration,
-                    progress_callback=_mtproto_up_prog
-                )
-                if not sent:
-                    send_comp = await MediaDownloaderService.compress_video_to_size(file_path, target_mb=48.0)
-                    doc_input = FSInputFile(str(send_comp), filename=send_comp.name)
-                    await message.answer_document(doc_input, caption=caption, parse_mode="HTML")
+                    last_edit_time_mt = 0
+                    def _mtproto_up_prog(curr, tot, spd, eta):
+                        nonlocal last_edit_time_mt
+                        now = time.time()
+                        if now - last_edit_time_mt >= 2.0 or curr >= tot:
+                            last_edit_time_mt = now
+                            pct = (curr / tot) * 100 if tot else 0
+                            bar_len = 10
+                            filled = int(pct / 10) if pct <= 100 else 10
+                            bar = "█" * filled + "░" * (bar_len - filled)
+                            text = (
+                                f"⚡ <b>Video bot chatga yuklanmoqda{part_label}...</b>\n\n"
+                                f"🎬 <b>Nomi:</b> <code>{escape_html(title[:35])}</code>\n"
+                                f"[{bar}] <b>{pct:.1f}%</b>\n"
+                                f"📊 <b>Hajm:</b> {format_bytes(curr)} / {format_bytes(tot)}\n"
+                                f"🚀 <b>Tezlik:</b> {format_speed(spd)} | ⏱ <b>Qolgan:</b> {format_eta(eta)}"
+                            )
+                            asyncio.create_task(status_msg.edit_text(text, parse_mode="HTML"))
+
+                    sent = await BotClientService.send_file_to_user(
+                        user_id=user_id,
+                        file_path=v_part,
+                        caption=part_caption,
+                        is_video=True,
+                        duration=duration,
+                        progress_callback=_mtproto_up_prog
+                    )
+                    if not sent:
+                        # Fallback: Agar bot MTProto ulanmagan bo'lsa
+                        doc_input = FSInputFile(str(v_part), filename=v_part.name)
+                        try:
+                            await message.answer_document(doc_input, caption=part_caption, parse_mode="HTML")
+                        except Exception:
+                            send_comp = await MediaDownloaderService.compress_video_to_size(v_part, target_mb=48.0)
+                            doc_comp = FSInputFile(str(send_comp), filename=send_comp.name)
+                            await message.answer_document(doc_comp, caption=part_caption, parse_mode="HTML")
 
             # 2. Qo'shimcha 320kbps MP3 Musiqasini DARHOL bot chatga yuborish
             try:

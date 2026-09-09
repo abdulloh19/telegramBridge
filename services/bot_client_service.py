@@ -99,7 +99,16 @@ class BotClientService:
                     pass
 
         try:
-            # 100MB - 2000MB fayllarni to'g'ridan-to'g'ri bot chatga uzatish
+            # 1. Foydalanuvchi entity sini xavfsiz aniqlash
+            try:
+                entity = await client.get_input_entity(user_id)
+            except Exception:
+                try:
+                    entity = await client.get_entity(user_id)
+                except Exception:
+                    entity = user_id
+
+            # 2. Fayl atributlarini tayyorlash
             attributes = []
             if is_video:
                 from telethon.tl.types import DocumentAttributeVideo
@@ -117,18 +126,47 @@ class BotClientService:
                     performer="Telegram Dev Bridge"
                 ))
 
+            # 3. FastTelethon orqali 512KB bloklarda 8-stream parallel o'ta tezkor yuklash
+            from services.fast_telethon import FastTelethon
+            try:
+                uploaded = await FastTelethon.upload_file(
+                    client=client,
+                    file_path=file_path,
+                    workers=8,
+                    progress_callback=_prog
+                )
+                file_payload = uploaded
+            except Exception as up_fast_err:
+                logger.warning(f"FastTelethon yuklashda xatolik, standart uploadga o'tilmoqda: {up_fast_err}")
+                file_payload = str(file_path)
+
+            # 4. Foydalanuvchi chatiga jo'natish
             await client.send_file(
-                entity=user_id,
-                file=str(file_path),
+                entity=entity,
+                file=file_payload,
                 caption=caption,
                 parse_mode="html",
                 supports_streaming=True,
                 attributes=attributes if attributes else None,
                 thumb=str(thumb_path) if thumb_path and Path(thumb_path).exists() else None,
-                progress_callback=_prog
+                progress_callback=_prog if file_payload == str(file_path) else None
             )
             logger.info(f"Fayl muvaffaqiyatli yetkazildi: {file_path.name}")
             return True
         except Exception as e:
             logger.error(f"Bot MTProto send_file xatoligi: {e}")
-            return False
+            # Oxirgi fallback urinishi
+            try:
+                await client.send_file(
+                    entity=user_id,
+                    file=str(file_path),
+                    caption=caption,
+                    parse_mode="html",
+                    supports_streaming=True,
+                    attributes=attributes if attributes else None
+                )
+                logger.info(f"Fayl fallback orqali yetkazildi: {file_path.name}")
+                return True
+            except Exception as e_fb:
+                logger.error(f"Bot MTProto fallback xatoligi: {e_fb}")
+                return False

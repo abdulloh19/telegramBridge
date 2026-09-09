@@ -336,6 +336,59 @@ class MediaDownloaderService:
         return video_path
 
     @classmethod
+    async def split_large_video_lossless(
+        cls,
+        video_path: Path | str,
+        chunk_seconds: int = 3600
+    ) -> list[Path]:
+        """
+        Telegram MTProto ning 2000MB (2GB) qat'iy cheklovidan oshib ketgan ulkan videolarni
+        sifatini zarracha yo'qotmasdan (ffmpeg stream copy -c copy) bir necha qismlarga
+        bo'ladi. Hech qanday qayta kodlash (re-encode) bo'lmaydi, jarayon 3-5 soniyada bajariladi.
+        """
+        video_path = Path(video_path)
+        if not video_path.exists():
+            return [video_path]
+
+        file_size_mb = video_path.stat().st_size / (1024 * 1024)
+        if file_size_mb <= 1950.0:
+            return [video_path]
+
+        ffmpeg_exe = cls.get_ffmpeg_path()
+        output_pattern = str(video_path.parent / f"{video_path.stem}_part%02d.mp4")
+
+        cmd = [
+            ffmpeg_exe,
+            "-nostdin",
+            "-y",
+            "-loglevel", "error",
+            "-i", str(video_path),
+            "-c", "copy",
+            "-map", "0",
+            "-f", "segment",
+            "-segment_time", str(chunk_seconds),
+            "-reset_timestamps", "1",
+            output_pattern
+        ]
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=300)
+            parts = sorted(list(video_path.parent.glob(f"{video_path.stem}_part*.mp4")))
+            if parts:
+                logger.info(f"Katta video sifat yo'qotmasdan {len(parts)} qismga ajratildi: {[p.name for p in parts]}")
+                return parts
+        except Exception as e:
+            logger.warning(f"Video qismlarga ajratishda xatolik: {e}")
+
+        return [video_path]
+
+    @classmethod
     async def download_external_media(
         cls,
         url: str,
@@ -383,7 +436,20 @@ class MediaDownloaderService:
             'no_warnings': True,
             'ffmpeg_location': ffmpeg_location,
             'noplaylist': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios']
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+            }
         }
+
+        # Agar maxsus cookies.txt fayli bo'lsa avtomatik ulash
+        cookie_file = BASE_DIR / "cookies.txt"
+        if cookie_file.exists():
+            ydl_opts['cookiefile'] = str(cookie_file)
 
         if audio_only:
             ydl_opts.update({

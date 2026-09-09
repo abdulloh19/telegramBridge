@@ -13,3 +13,12 @@ cryptography>=42.0.0
 google-genai>=0.1.1
 imageio-ffmpeg>=0.6.0
 yt-dlp>=2025.1.0
+# STT (Speech-to-Text) uchun
+SpeechRecognition>=3.10.0
+pydub>=0.25.1
+# Google API integratsiyalari uchun
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+gkeepapi>=0.15.0
+

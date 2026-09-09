@@ -1,5 +1,5 @@
 import asyncio
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -116,3 +116,70 @@ async def cb_open_mp3(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "noop")
 async def cb_noop(callback: CallbackQuery):
     await callback.answer()
+
+
+@router.callback_query(F.data == "btn_quick_restart")
+async def cb_quick_restart(callback: CallbackQuery, state: FSMContext):
+    await callback.answer("🚀 Bot yangilanmoqda...")
+    await cmd_start(callback.message, state)
+
+
+@router.callback_query(F.data == "btn_quick_dl")
+async def cb_quick_dl(callback: CallbackQuery, state: FSMContext):
+    from handlers.media_downloader import cmd_download_media
+    await callback.answer()
+    await cmd_download_media(callback.message, state, callback.bot)
+
+
+@router.callback_query(F.data == "btn_quick_mp3")
+async def cb_quick_mp3(callback: CallbackQuery, state: FSMContext):
+    from handlers.media_downloader import cmd_download_mp3
+    await callback.answer()
+    await cmd_download_mp3(callback.message, state, callback.bot)
+
+
+@router.message(Command("broadcast", "elon", "xabar"), StateFilter("*"))
+async def cmd_broadcast(message: Message, state: FSMContext, bot: Bot):
+    """
+    Faqat adminlar uchun: Barcha foydalanuvchilarga ommaviy xabarnoma (broadcast) yuborish.
+    Foydalanish:
+      /broadcast            -> Standart /start bosish talab qiluvchi yangilanish xabari
+      /broadcast <matn>     -> Maxsus kiritilgan matnli xabarnoma
+    """
+    from config import is_admin
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        await message.answer("❌ Bu buyruq faqat bot adminlari uchun ochiq.")
+        return
+
+    # Maxsus matn kiritilganligini tekshirish
+    parts = message.text.split(maxsplit=1)
+    custom_text = parts[1].strip() if len(parts) > 1 else None
+
+    from services.broadcast_service import BroadcastService
+    status_msg = await message.answer(
+        "🚀 <b>Ommaviy xabarnoma (broadcast) boshlanmoqda...</b>\n\n"
+        "<i>Foydalanuvchilar bazasi tekshirilmoqda, iltimos kuting...</i>",
+        parse_mode="HTML"
+    )
+
+    try:
+        res = await BroadcastService.send_broadcast_to_all(
+            bot=bot,
+            custom_text=custom_text
+        )
+
+        report_text = (
+            "✅ <b>Ommaviy Xabarnoma Muvaffaqiyatli Yakunlandi!</b>\n\n"
+            "📊 <b>Natijalar Hisoboti:</b>\n"
+            f"• 👥 <b>Jami foydalanuvchilar:</b> {res['total']} ta\n"
+            f"• 🟢 <b>Yetkazildi (Muvaffaqiyatli):</b> {res['sent']} ta\n"
+            f"• 🚫 <b>Botni bloklaganlar:</b> {res['blocked']} ta\n"
+            f"• ⚠️ <b>Xatoliklar:</b> {res['failed']} ta\n"
+            f"• ⏱ <b>Sarflangan vaqt:</b> {res['duration_sec']} soniya\n\n"
+            "✨ <i>Barcha foydalanuvchilarga /start bosish talab qilingan xabarnoma yetkazildi.</i>"
+        )
+        await status_msg.edit_text(report_text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Broadcast xatoligi: {e}")
+        await status_msg.edit_text(f"❌ <b>Xabarnoma yuborishda xatolik yuz berdi:</b> {escape_html(str(e))}", parse_mode="HTML")
