@@ -12,15 +12,15 @@ from utils.helpers import escape_html
 
 
 DEFAULT_BROADCAST_MESSAGE = (
-    "🔔 <b>MUHIM XABARNOMA: Bot Yangilandi! (v2.6.0) 🚀</b>\n\n"
-    "Hurmatli foydalanuvchi! Botimizga muhim yangilanishlar va yangi imkoniyatlar kiritildi:\n\n"
+    "🔔 <b>MUHIM XABARNOMA: Bot Yangilandi! (v2.7.0) 🚀</b>\n\n"
+    "Hurmatli foydalanuvchi! Botimizga navbatdagi muhim yangilanishlar kiritildi:\n\n"
     "✨ <b>Yangi Imkoniyatlar:</b>\n"
-    "• 👤 <b>Unikal Foydalanuvchilar & Dashboard:</b> Barcha foydalanuvchilar unikal ro'yxatga olinadi va statistika to'liq sinxronlashtirildi.\n"
+    "• 📚 <b>Yodlangan So'zlar Til Bo'yicha Alohida:</b> Qaysi tilni tanlasangiz, aynan shu til bo'yicha yodlangan so'zlar chiqadi (Rus tili: 15 ta, Ingliz tili: 10 ta)!\n"
+    "• 🔘 <b>Tezkor Til Almashtirish:</b> /mywords yoki menyuda inline tugmalar orqali qulay boshqaruv.\n"
+    "• 📱 <b>Super Ilova (Mini App):</b> Yangi ko'rsatkichlar web ilovada ham to'liq sinxronlashtirildi.\n"
     "• ⏰ <b>Ko'p Vaqtli Eslatmalar:</b> Xabardagi bir nechta vaqtlarni aniqlab, o'z vaqtida bildirishnoma yuborish.\n"
-    "• 📋 <b>Eslatmalar & Qaydlar:</b> /reminders va /notes bo'limlari orqali qulay boshqaruv.\n"
-    "• 🗣️ <b>5 ta Hayotiy Dialog & Doimiy Progress:</b> Dialog va quizlar ketma-ketligi saqlanadi.\n"
-    "• 🎤 <b>Ovozli Xabarlar (STT):</b> Gemini 3.6 Flash orqali tezkor matnga o'girish.\n\n"
-    "👉 Yangilangan imkoniyatlardan foydalanish uchun <b>/start</b> bosing!"
+    "• 🗣️ <b>5 ta Hayotiy Dialog & Doimiy Progress:</b> Dialog va quizlar ketma-ketligi saqlanadi.\n\n"
+    "👉 Yangilangan imkoniyatlardan foydalanish uchun <b>/start</b> bosing yoki <b>📚 Yodlangan so'zlarim</b> bo'limini oching!"
 )
 
 
