@@ -1,127 +1,196 @@
 """
-Matnli Xabar Keep Handleri
-============================
-Foydalanuvchi oddiy matn yozganida:
-  1. "Buni Google Keep'ga saqlaymizmi?" so'rovi chiqariladi
-  2. Ha bosilsa Keep ga saqlaydi
-  3. Yo'q bosilsa jim o'tkazadi
-
-MUHIM: Bu handler faqat /start, /dl va boshqa buyruqlarga
-tegishli bo'lmagan oddiy matnlarni ushlaydigan PASTROQ prioritetli handler.
+Eslatmalar Handleri (Notes Handler)
+==================================
+1. /notes yoki /eslatmalar — barcha saqlangan eslatmalarni ko'rish
+2. /note <matn> yoki /eslatma <matn> — yangi matnli eslatma saqlash
+3. "Eslatma: ..." deb yozilsa avtomatik eslatmaga saqlash
+4. Eslatmalarni o'chirish va to'liq o'qish
 """
 
 import logging
-
 from aiogram import Router, F
-from aiogram.filters import BaseFilter
+from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+
+from services.notes_service import NotesService
+from services.google_keep_service import is_keep_configured, save_to_google_keep
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 
-# Vaqtincha matnlarni saqlash (chat_id -> text)
-_pending_texts: dict = {}
 
-# Keep so'rovi yuboriladigan minimum matn uzunligi
-MIN_TEXT_LENGTH = 10
-
-
-class PlainTextFilter(BaseFilter):
-    """Buyruq bo'lmagan, oddiy matn xabarlar."""
-    async def __call__(self, message: Message) -> bool:
-        if not message.text:
-            return False
-        txt = message.text.strip()
-        # Buyruqlar (/ bilan boshlanadigan) yoki juda qisqa matnlar e'tiborga olinmaydi
-        if txt.startswith("/"):
-            return False
-        if len(txt) < MIN_TEXT_LENGTH:
-            return False
-        return True
+def _build_notes_list_keyboard(notes: list) -> InlineKeyboardMarkup:
+    """Eslatmalar ro'yxati tugmalari."""
+    buttons = []
+    for n in notes[:10]:
+        title = n.get("title", "Eslatma")
+        if len(title) > 28:
+            title = title[:25] + "..."
+        nid = n.get("id")
+        buttons.append([
+            InlineKeyboardButton(text=f"📌 {title}", callback_data=f"nv_{nid}"),
+            InlineKeyboardButton(text="🗑️", callback_data=f"nd_{nid}")
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _build_text_keep_keyboard(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Ha, Keep'ga saqlash", callback_data=f"textkeep_yes_{chat_id}"),
-            InlineKeyboardButton(text="❌ Yo'q", callback_data=f"textkeep_no_{chat_id}"),
-        ]
-    ])
+@router.message(Command("notes", "eslatmalar"))
+@router.message(F.text == "📋 Eslatmalarim")
+async def cmd_list_notes(message: Message):
+    """Foydalanuvchining barcha eslatmalarini ko'rsatish."""
+    user_id = message.from_user.id
+    notes = NotesService.get_user_notes(user_id)
 
+    if not notes:
+        await message.answer(
+            "📭 <b>Sizda hozircha saqlangan eslatmalar yo'q.</b>\n\n"
+            "💡 <b>Yangi eslatma yaratish:</b>\n"
+            "• Botga <b>ovozli xabar</b> yuboring va 'Saqlash' tugmasini bosing\n"
+            "• Yoki <code>/note Sizning eslatmangiz</code> deb yozing\n"
+            "• Yoki <code>Eslatma: ertaga soat 10 da uchrashuv</code> deb yuboring",
+            parse_mode="HTML"
+        )
+        return
 
-@router.message(PlainTextFilter())
-async def handle_plain_text(message: Message):
-    """Matn xabar kelganda Keep saqlash taklifi."""
-    chat_id = message.chat.id
-    text = message.text.strip()
-
-    # Vaqtincha saqlash
-    _pending_texts[chat_id] = text
+    text = (
+        f"📋 <b>Sizning saqlangan eslatmalaringiz ({len(notes)} ta):</b>\n\n"
+        "<i>Batafsil o'qish uchun eslatma ustiga bosing:</i>"
+    )
 
     await message.answer(
-        "<b>💬 Matn qabul qilindi.</b>\n\n"
-        "<i>\"" + (text[:120] + "..." if len(text) > 120 else text) + "\"</i>\n\n"
-        "<b>💾 Buni Google Keep'ga saqlaymizmi?</b>",
+        text,
         parse_mode="HTML",
-        reply_markup=_build_text_keep_keyboard(chat_id),
+        reply_markup=_build_notes_list_keyboard(notes)
     )
 
 
-@router.callback_query(F.data.startswith("textkeep_yes_"))
-async def callback_textkeep_yes(callback: CallbackQuery):
-    """Foydalanuvchi 'Ha' ni bosdi."""
-    await callback.answer()
-    chat_id = callback.message.chat.id
-    text = _pending_texts.pop(chat_id, None)
+@router.message(Command("note", "eslatma"))
+async def cmd_add_note(message: Message):
+    """Tezkor eslatma qo'shish (/note <matn>)."""
+    user_id = message.from_user.id
+    parts = message.text.split(maxsplit=1)
 
-    await callback.message.edit_reply_markup(reply_markup=None)
-
-    if not text:
-        await callback.message.answer("⚠️ Matn topilmadi. Qayta yuboring.")
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            "✍️ <b>Eslatma matnini kiriting:</b>\n"
+            "Masalan: <code>/note Ertaga hisobot topshirish kerak</code>",
+            parse_mode="HTML"
+        )
         return
 
-    saving_msg = await callback.message.answer("⏳ Keep'ga saqlanmoqda...")
+    note_text = parts[1].strip()
+    note = NotesService.save_note(user_id=user_id, text=note_text, source="text")
 
-    try:
-        from services.google_keep_service import save_to_google_keep
-        from datetime import datetime
+    if is_keep_configured():
+        try:
+            await save_to_google_keep(note_text, title=note.get("title"))
+        except Exception:
+            pass
 
-        user = callback.from_user
-        sender = user.first_name or user.username or str(user.id)
-        now = datetime.now()
-        title = "Telegram Matn — " + sender + " — " + now.strftime("%d.%m.%Y %H:%M")
-
-        result = await save_to_google_keep(text, title=title, labels=["Telegram", "Matn"])
-
-        if result.get("success"):
-            url = result.get("url", "#")
-            await saving_msg.edit_text(
-                "<b>✅ Google Keep'ga saqlandi!</b>\n"
-                + '<a href="' + url + '">Keep\'da ochish</a>',
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        else:
-            err = result.get("error", "nomalum")
-            if "credentials" in err:
-                await saving_msg.edit_text(
-                    "⚠️ Google Keep hali sozlanmagan.\n"
-                    "<i>(.env da GOOGLE_KEEP_EMAIL va GOOGLE_KEEP_MASTER_TOKEN kerak)</i>",
-                    parse_mode="HTML",
-                )
-            else:
-                await saving_msg.edit_text("❌ Saqlab bo'lmadi: " + err)
-
-    except Exception as e:
-        logger.error("Text Keep save xatosi: " + str(e))
-        await saving_msg.edit_text("❌ Xatolik: " + str(e))
+    await message.answer(
+        "<b>✅ Eslatma saqlandi!</b>\n\n"
+        f"📌 <b>Sarlavha:</b> {note.get('title')}\n"
+        f"🕒 <b>Vaqt:</b> {note.get('created_at')}\n\n"
+        "Barcha eslatmalarni ko'rish: /notes",
+        parse_mode="HTML"
+    )
 
 
-@router.callback_query(F.data.startswith("textkeep_no_"))
-async def callback_textkeep_no(callback: CallbackQuery):
-    """Foydalanuvchi 'Yo'q' ni bosdi."""
-    await callback.answer("OK.")
-    chat_id = callback.message.chat.id
-    _pending_texts.pop(chat_id, None)
-    await callback.message.edit_reply_markup(reply_markup=None)
+@router.message(F.text.lower().startswith("eslatma:") | F.text.lower().startswith("eslatma "))
+async def handle_note_prefix(message: Message):
+    """'Eslatma: ...' formatidagi xabarlarni avtomatik eslatma qilish."""
+    user_id = message.from_user.id
+    text = message.text
+    clean_text = text.split(":", 1)[-1].strip() if ":" in text else text[7:].strip()
+
+    if not clean_text:
+        return
+
+    note = NotesService.save_note(user_id=user_id, text=clean_text, source="text")
+
+    if is_keep_configured():
+        try:
+            await save_to_google_keep(clean_text, title=note.get("title"))
+        except Exception:
+            pass
+
+    await message.answer(
+        "<b>✅ Eslatma saqlandi!</b>\n\n"
+        f"📌 <b>{note.get('title')}</b>\n"
+        f"🕒 {note.get('created_at')}\n\n"
+        "Ro'yxat: /notes",
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data.startswith("nv_"))
+async def callback_view_note(callback: CallbackQuery):
+    """Eslatmani to'liq o'qish."""
+    note_id = callback.data.replace("nv_", "")
+    user_id = callback.from_user.id
+
+    note = NotesService.get_note(user_id, note_id)
+    if not note:
+        await callback.answer("⚠️ Eslatma topilmadi yoki o'chirilgan.", show_alert=True)
+        return
+
+    await callback.answer()
+    src_icon = "🎤" if note.get("source") == "voice" else "✍️"
+
+    msg = (
+        f"{src_icon} <b>{note.get('title')}</b>\n"
+        f"🕒 <i>{note.get('created_at')}</i>\n\n"
+        f"{note.get('text')}"
+    )
+
+    del_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🗑️ O'chirish", callback_data=f"nd_{note_id}"),
+            InlineKeyboardButton(text="⬅️ Ortga", callback_data="n_back_list"),
+        ]
+    ])
+
+    await callback.message.edit_text(msg, parse_mode="HTML", reply_markup=del_kb)
+
+
+@router.callback_query(F.data.startswith("nd_"))
+async def callback_delete_note(callback: CallbackQuery):
+    """Eslatmani o'chirish."""
+    note_id = callback.data.replace("nd_", "")
+    user_id = callback.from_user.id
+
+    success = NotesService.delete_note(user_id, note_id)
+    if success:
+        await callback.answer("✅ Eslatma o'chirildi.")
+    else:
+        await callback.answer("⚠️ Eslatma topilmadi.")
+
+    notes = NotesService.get_user_notes(user_id)
+    if not notes:
+        await callback.message.edit_text("📭 Sizda boshqa eslatmalar qolmadi.\n\nYangi qo'shish: /note", parse_mode="HTML")
+        return
+
+    await callback.message.edit_text(
+        f"📋 <b>Sizning saqlangan eslatmalaringiz ({len(notes)} ta):</b>",
+        parse_mode="HTML",
+        reply_markup=_build_notes_list_keyboard(notes)
+    )
+
+
+@router.callback_query(F.data == "n_back_list")
+async def callback_back_to_notes(callback: CallbackQuery):
+    """Eslatmalar ro'yxatiga qaytish."""
+    await callback.answer()
+    user_id = callback.from_user.id
+    notes = NotesService.get_user_notes(user_id)
+
+    if not notes:
+        await callback.message.edit_text("📭 Sizda hozircha eslatmalar yo'q.", parse_mode="HTML")
+        return
+
+    await callback.message.edit_text(
+        f"📋 <b>Sizning saqlangan eslatmalaringiz ({len(notes)} ta):</b>",
+        parse_mode="HTML",
+        reply_markup=_build_notes_list_keyboard(notes)
+    )

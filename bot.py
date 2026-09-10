@@ -36,46 +36,27 @@ async def setup_bot_commands(bot: Bot):
     """Telegram ilovasida menyu buyruqlarini ro'yxatdan o'tkazish."""
     commands = [
         BotCommand(command="start", description="🚀 Bosh menyuni ochish"),
+        BotCommand(command="notes", description="📋 Saqlangan eslatmalarni ko'rish"),
         BotCommand(command="dl", description="📥 Video & MP3 yuklash (Telegram, YouTube, Insta, TikTok)"),
         BotCommand(command="mp3", description="🎵 Faqat MP3 Audio yuklash (320kbps)"),
         BotCommand(command="cleaner", description="🧹 Telegram hisobni tozalash"),
         BotCommand(command="help", description="📖 To'liq qo'llanma"),
     ]
+
     await bot.set_my_commands(commands)
 
 
 async def notify_admins_on_startup(bot: Bot):
-    """Bot ishga tushganda adminlarga hozirgi sessiyada qo'shilgan yangiliklar haqida xabar."""
+    """Bot ishga tushganda yangi versiya bo'lsa haqiqiy yangiliklarni yuborish."""
     if not ADMIN_IDS:
-        logger.warning("DIQQAT: .env faylida ADMIN_IDS ko'rsatilmagan!")
+        logger.warning("DIQQAT: .env faylida ADMIN_IDS ko'rsatilmagan! Bot faqat adminlar uchun ishlaydi.")
         return
 
-    import datetime
-    now = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
-
-    text = (
-        f"🟢 <b>Bot yangilandi va ishga tushdi!</b> 🚀  <i>({now})</i>\n\n"
-        "📋 <b>Hozirgi sessiyada qo'shilgan yangiliklar:</b>\n\n"
-        "🎤 <b>Ovozli Xabar → STT + Keep Tasdiqi:</b>\n"
-        "   • Ovoz yuborilsa Gemini AI matnga o'giradi\n"
-        "   • <i>«Buni Keep'ga saqlaymizmi?»</i> ✅/❌ so'rovi chiqadi\n"
-        "   • Ha bosilsa Keep + Calendar'ga avtomatik saqlanadi\n\n"
-        "📝 <b>Matn Xabar → Keep Saqlash:</b>\n"
-        "   • Oddiy matn yozsangiz <i>«Keep'ga saqlaymizmi?»</i> so'rovi\n"
-        "   • Tasdiqda Google Keep'ga avtomatik qo'shiladi\n\n"
-        "📅 <b>Aqlli Sana/Vaqt Aniqlash:</b>\n"
-        "   • <i>«Ertaga soat 10 da uchrashuv»</i> → Calendar event avtomatik\n\n"
-        "⚠️ <b>Keep/Calendar ishlashi uchun .env:</b>\n"
-        "   <code>GOOGLE_KEEP_EMAIL</code>\n"
-        "   <code>GOOGLE_KEEP_MASTER_TOKEN</code>\n"
-        "   <code>GOOGLE_CALENDAR_CREDENTIALS_JSON</code>"
-    )
-
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_message(admin_id, text, parse_mode="HTML")
-        except Exception as e:
-            logger.warning(f"Admin ({admin_id}) ga bildirishnoma yuborilmadi: {e}")
+    try:
+        from services.release_service import notify_admins_of_new_release
+        await notify_admins_of_new_release(bot, ADMIN_IDS)
+    except Exception as e:
+        logger.warning(f"Yangilanish bildirishnomasi xatosi: {e}")
 
 
 async def main():
@@ -140,7 +121,7 @@ async def main():
     dp.message.middleware(auth_middleware)
     dp.callback_query.middleware(auth_middleware)
 
-    # Router'lar (tartib muhim — yuqoridagi handler avval ishga tushadi)
+    # Router'lar: start, cleaner, media_downloader, voice_handler, text_keep_handler
     dp.include_router(start.router)
     dp.include_router(cleaner.router)
     dp.include_router(media_downloader.router)
