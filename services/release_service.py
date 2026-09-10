@@ -6,6 +6,7 @@ Faqat yangi yangilanish bo'lganda, aynan o'sha versiyada kiritilgan
 haqiqiy yangiliklar ro'yxatini yuboradi.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional, List
@@ -16,11 +17,13 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 VERSION_FILE = DATA_DIR / "last_announced_version.txt"
 
-CURRENT_VERSION = "2.5.0"
+CURRENT_VERSION = "2.6.0"
 RELEASE_DATE = "10.09.2026"
 
 # AYNAN USHBU VERSIYADA KIRITILGAN HAQIQIY YANGILIKLAR RO'YXATI
 CURRENT_CHANGES: List[str] = [
+    "👤 <b>Unikal Foydalanuvchilar va Dashboard:</b> Foydalanuvchilar bazaga unikal tarzda yoziladi va o'rganilgan so'zlar statistikasi Web Dashboard bilan to'liq sinxronlashtirildi.",
+    "📢 <b>Kafolatlangan Ommaviy Xabarnoma (Broadcast):</b> Yangilanishlar barcha foydalanuvchilarga xatosiz, tezkor va ishonchli yetkaziladi.",
     "⏰ <b>Bir Nechta Vaqtli Eslatmalar (Multiple Reminders):</b> Bitta ovozli yoki matnli xabarda bir nechta vaqt aytilsa (masalan: <i>«10:00 da majlis, 14:00 da dars»</i>), har biri alohida ajratilib, belgilangan vaqtda aniq Telegram bildirishnomasi (notification) yuboriladi.",
     "📋 <b>Eslatmalar Paneli (/reminders):</b> Barcha faol eslatmalarni qolgan daqiqalarigacha ko'rish va boshqarish imkoniyati.",
     "🎤 <b>Kengaytirilgan Ovozli Xabarlar (STT):</b> Google Gemini 3.6 Flash orqali qisqa va juda uzun audiolarni xatosiz matnga o'girish.",

@@ -12,16 +12,15 @@ from utils.helpers import escape_html
 
 
 DEFAULT_BROADCAST_MESSAGE = (
-    "🔔 <b>MUHIM XABARNOMA: Bot Yangilandi! 🚀</b>\n\n"
-    "Hurmatli foydalanuvchi! Botimizga katta yangilanishlar va yangi imkoniyatlar kiritildi:\n\n"
+    "🔔 <b>MUHIM XABARNOMA: Bot Yangilandi! (v2.6.0) 🚀</b>\n\n"
+    "Hurmatli foydalanuvchi! Botimizga muhim yangilanishlar va yangi imkoniyatlar kiritildi:\n\n"
     "✨ <b>Yangi Imkoniyatlar:</b>\n"
-    "• 🚀 <b>YouTube Video Yuklashda MB Cheklovi Butunlay Olib Tashlandi!</b>\n"
-    "  Endi istalgan hajmdagi (50MB dan 2000MB gacha va undan katta) videolarni 1080p/2K/4K sifatda cheklovsiz yuklab olishingiz mumkin.\n"
-    "• 🎵 <b>Yuqori Sifatli MP3 (320kbps):</b> Har bir video bilan birga toza studio audio ham yetkaziladi.\n"
-    "• ⚡ <b>Turbo 8-Stream Parallel Yuklash:</b> Yuklash va jo'natish tezligi 3 baravarga oshirildi.\n"
-    "• 🧹 <b>Telegram Hisob Tozalovchi:</b> O'chgan akkauntlar va nofaol chatlarni 1 soniyada tozalash (/cleaner).\n\n"
-    "⚠️ <b>DIQQAT: Yangi funksiyalar to'g'ri va xatosiz ishlashi uchun barcha foydalanuvchilar botni qayta ishga tushirishi (/start bosishi) shart!</b>\n\n"
-    "👇 <i>Quyidagi tugmani bosing va botni darhol yangilang:</i>"
+    "• 👤 <b>Unikal Foydalanuvchilar & Dashboard:</b> Barcha foydalanuvchilar unikal ro'yxatga olinadi va statistika to'liq sinxronlashtirildi.\n"
+    "• ⏰ <b>Ko'p Vaqtli Eslatmalar:</b> Xabardagi bir nechta vaqtlarni aniqlab, o'z vaqtida bildirishnoma yuborish.\n"
+    "• 📋 <b>Eslatmalar & Qaydlar:</b> /reminders va /notes bo'limlari orqali qulay boshqaruv.\n"
+    "• 🗣️ <b>5 ta Hayotiy Dialog & Doimiy Progress:</b> Dialog va quizlar ketma-ketligi saqlanadi.\n"
+    "• 🎤 <b>Ovozli Xabarlar (STT):</b> Gemini 3.6 Flash orqali tezkor matnga o'girish.\n\n"
+    "👉 Yangilangan imkoniyatlardan foydalanish uchun <b>/start</b> bosing!"
 )
 
 

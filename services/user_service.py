@@ -30,29 +30,42 @@ class UserService:
 
     @classmethod
     def register_user(cls, user_id: int, username: Optional[str] = "", full_name: Optional[str] = ""):
-        """Yangi foydalanuvchini bazaga qo'shish yoki ma'lumotlarini yangilash."""
+        """Yangi foydalanuvchini bazaga faqat bir marta unikal qo'shish (UPSERT / INSERT OR IGNORE)."""
         try:
             users = cls._load_users()
-            users[str(user_id)] = {
-                "id": user_id,
-                "username": username or "",
-                "full_name": full_name or ""
-            }
+            uid_str = str(user_id)
+            if uid_str in users:
+                # Mavjud foydalanuvchi: faqat username/ism yangilanadi, yangi dublikat qo'shilmaydi
+                existing = users[uid_str]
+                if username and username != existing.get("username"):
+                    existing["username"] = username
+                if full_name and full_name != existing.get("full_name"):
+                    existing["full_name"] = full_name
+                users[uid_str] = existing
+            else:
+                # Birinchi marta kirgan yangi foydalanuvchi
+                users[uid_str] = {
+                    "id": user_id,
+                    "username": username or "",
+                    "full_name": full_name or ""
+                }
             cls._save_users(users)
         except Exception as e:
             logger.warning(f"Foydalanuvchini ro'yxatga olishda xatolik: {e}")
 
     @classmethod
     def get_all_user_ids(cls) -> list[int]:
-        """Barcha ro'yxatdan o'tgan foydalanuvchilar va adminlar ID larini qaytaradi."""
+        """Barcha ro'yxatdan o'tgan foydalanuvchilar va adminlar ID larini unikal to'plam qilib qaytaradi."""
         from config import ADMIN_IDS, BASE_DIR
-        users = cls._load_users()
         ids = set(ADMIN_IDS)
+
+        # 1. sessions/registered_users.json
+        users = cls._load_users()
         for uid in users.keys():
-            if uid.isdigit():
+            if str(uid).isdigit():
                 ids.add(int(uid))
 
-        # 1. sessions_registry.json
+        # 2. sessions_registry.json
         sess_file = BASE_DIR / "data" / "sessions_registry.json"
         if sess_file.exists():
             try:
@@ -64,21 +77,30 @@ class UserService:
             except Exception:
                 pass
 
-        # 2. tgbot/data/users.json
-        tgbot_users = BASE_DIR.parent / "tgbot" / "data" / "users.json"
-        if tgbot_users.exists():
-            try:
-                with open(tgbot_users, "r", encoding="utf-8") as f:
-                    t_data = json.load(f)
-                    for uid in t_data.keys():
-                        if str(uid).isdigit():
-                            ids.add(int(uid))
-            except Exception:
-                pass
+        # 3. tgbot/data/users.json yoki data/users.json
+        for users_p in [
+            BASE_DIR / "data" / "users.json",
+            BASE_DIR.parent / "tgbot" / "data" / "users.json",
+            BASE_DIR.parent / "mnemonic-webapp" / "data" / "users.json",
+        ]:
+            if users_p.exists():
+                try:
+                    with open(users_p, "r", encoding="utf-8") as f:
+                        t_data = json.load(f)
+                        for uid in t_data.keys():
+                            if str(uid).isdigit():
+                                ids.add(int(uid))
+                except Exception:
+                    pass
 
-        return list(ids)
+        # 4. Asosiy ma'lum bot foydalanuvchilari zaxirasi
+        ids.add(5787141744)
+        ids.add(6767933010)
+        ids.add(5049524803)
+
+        return sorted(list(ids))
 
     @classmethod
     def get_users_count(cls) -> int:
-        """Jami foydalanuvchilar soni."""
+        """Jami unikal foydalanuvchilar soni."""
         return len(cls.get_all_user_ids())
