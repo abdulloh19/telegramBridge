@@ -36,7 +36,8 @@ async def setup_bot_commands(bot: Bot):
     """Telegram ilovasida menyu buyruqlarini ro'yxatdan o'tkazish."""
     commands = [
         BotCommand(command="start", description="🚀 Bosh menyuni ochish"),
-        BotCommand(command="notes", description="📋 Saqlangan eslatmalarni ko'rish"),
+        BotCommand(command="reminders", description="⏰ Faol vaqtli eslatmalarni ko'rish"),
+        BotCommand(command="notes", description="📋 Saqlangan matnli qaydlarni ko'rish"),
         BotCommand(command="dl", description="📥 Video & MP3 yuklash (Telegram, YouTube, Insta, TikTok)"),
         BotCommand(command="mp3", description="🎵 Faqat MP3 Audio yuklash (320kbps)"),
         BotCommand(command="cleaner", description="🧹 Telegram hisobni tozalash"),
@@ -137,9 +138,18 @@ async def main():
     logger.info(f"Ruxsat berilgan Admin ID lar: {list(ADMIN_IDS)}")
     logger.info("Bot Telegram xabarlarini tinglamoqda...")
 
+    # Orqa fonda ko'p vaqtli eslatmalar skeduleri (Background Scheduler)
+    from services.reminder_service import start_reminder_scheduler
+    scheduler_task = asyncio.create_task(start_reminder_scheduler(bot))
+
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        scheduler_task.cancel()
+        try:
+            await scheduler_task
+        except (asyncio.CancelledError, Exception):
+            pass
         await bot.session.close()
         logger.info("Bot to'xtatildi.")
 

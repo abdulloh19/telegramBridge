@@ -16,17 +16,17 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 VERSION_FILE = DATA_DIR / "last_announced_version.txt"
 
-CURRENT_VERSION = "2.4.0"
+CURRENT_VERSION = "2.5.0"
 RELEASE_DATE = "10.09.2026"
 
 # AYNAN USHBU VERSIYADA KIRITILGAN HAQIQIY YANGILIKLAR RO'YXATI
 CURRENT_CHANGES: List[str] = [
-    "🎤 <b>Kengaytirilgan Ovozli Xabarlar (STT):</b> Google Gemini 3.6 Flash orqali qisqa va bir necha daqiqalik uzun ovozli xabarlar aniq va xatosiz matnga o'giriladi.",
-    "📝 <b>Ichki Eslatmalar Tizimi (/notes):</b> Ovozli transkripsiyalar va qaydlar bot xotirasida saqlanadi. <code>/notes</code> orqali istalgan paytda ko'rish mumkin.",
+    "⏰ <b>Bir Nechta Vaqtli Eslatmalar (Multiple Reminders):</b> Bitta ovozli yoki matnli xabarda bir nechta vaqt aytilsa (masalan: <i>«10:00 da majlis, 14:00 da dars»</i>), har biri alohida ajratilib, belgilangan vaqtda aniq Telegram bildirishnomasi (notification) yuboriladi.",
+    "📋 <b>Eslatmalar Paneli (/reminders):</b> Barcha faol eslatmalarni qolgan daqiqalarigacha ko'rish va boshqarish imkoniyati.",
+    "🎤 <b>Kengaytirilgan Ovozli Xabarlar (STT):</b> Google Gemini 3.6 Flash orqali qisqa va juda uzun audiolarni xatosiz matnga o'girish.",
+    "📝 <b>Ichki Qaydlar Tizimi (/notes):</b> Transkripsiya qilingan nutq va matnlarni bot xotirasida saqlash.",
     "🗣️ <b>5 ta Hayotiy Kundalik Dialog:</b> Taksi, Sayohat, Bozor, Kafe va Dorixona mavzulari bo'yicha interaktiv dialog mashqlari.",
-    "📊 <b>Progress & Ketma-ketlik:</b> Dialoglar va so'zlarda to'xtagan bosqichingiz xotirada to'liq saqlanib, qayta boshidan boshlanmaydi.",
-    "🔄 <b>Aqlli Qayta Topshirish:</b> Test natijasi 40% dan past bo'lganda, xatolarni bartaraf qilish uchun qayta ishlash imkoniyati.",
-    "🛠️ <b>Google Keep xatoligi bartaraf etildi:</b> Endi .env sozlamalarisiz ham barcha eslatmalar botning o'zida ishonchli saqlanadi."
+    "📊 <b>Progress & Ketma-ketlik:</b> Dialog va darslarda to'xtagan bosqichingiz xotirada to'liq saqlanadi."
 ]
 
 
