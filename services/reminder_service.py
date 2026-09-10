@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,16 @@ REMINDERS_FILE = DATA_DIR / "reminders.json"
 
 # Toshkent vaqt mintaqasi (UTC+5)
 TZ_TASHKENT = timezone(timedelta(hours=5))
+
+
+def get_reminder_notification_keyboard(rem_id: str) -> InlineKeyboardMarkup:
+    """Eslatma kelganda chiqariladigan [✅ Bajarildi] va [⏳ Keyin bajaraman] tugmalari."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Bajarildi", callback_data=f"rc_done_{rem_id}"),
+            InlineKeyboardButton(text="⏳ Keyin bajaraman", callback_data=f"rc_later_{rem_id}")
+        ]
+    ])
 
 
 def _ensure_reminders_storage():
@@ -76,8 +87,13 @@ class ReminderService:
             "due_datetime": due_datetime,
             "due_timestamp": due_timestamp,
             "source": source,
-            "status": "pending",  # pending, sent, cancelled
-            "created_at": now.strftime("%d.%m.%Y %H:%M")
+            "status": "pending",  # pending, postponed, completed, cancelled
+            "created_at": now.strftime("%d.%m.%Y %H:%M"),
+            "notify_count_today": 0,
+            "last_notify_date": "",
+            "last_notify_timestamp": 0,
+            "completed_at": None,
+            "postponed_at": None
         }
 
         reminders.append(new_rem)
@@ -131,13 +147,67 @@ class ReminderService:
         return user_rems
 
     @classmethod
+    def get_categorized_reminders(cls, user_id: int) -> Dict[str, List[Dict[str, Any]]]:
+        """Foydalanuvchining eslatmalarini toifalar bo'yicha ajratib beradi."""
+        reminders = _load_all_reminders()
+        user_rems = [r for r in reminders if r.get("user_id") == user_id]
+
+        pending = [r for r in user_rems if r.get("status") == "pending"]
+        postponed = [r for r in user_rems if r.get("status") == "postponed"]
+        completed = [r for r in user_rems if r.get("status") == "completed"]
+
+        pending.sort(key=lambda x: x.get("due_timestamp", 0))
+        postponed.sort(key=lambda x: x.get("due_timestamp", 0))
+        completed.sort(key=lambda x: x.get("due_timestamp", 0), reverse=True)
+
+        return {
+            "pending": pending,
+            "postponed": postponed,
+            "completed": completed
+        }
+
+    @classmethod
+    def mark_reminder_completed(cls, user_id: Optional[int], reminder_id: str) -> Optional[Dict[str, Any]]:
+        """Foydalanuvchi 'Bajarildi' deb tanlaganda vazifani completed holatiga o'tkazish."""
+        reminders = _load_all_reminders()
+        target = None
+        for r in reminders:
+            if r.get("id") == reminder_id and (user_id is None or r.get("user_id") == user_id):
+                r["status"] = "completed"
+                r["completed_at"] = datetime.now(TZ_TASHKENT).strftime("%d.%m.%Y %H:%M")
+                target = r
+                break
+
+        if target:
+            _save_all_reminders(reminders)
+            logger.info(f"Eslatma 'bajarildi' deb belgilandi: {reminder_id}")
+        return target
+
+    @classmethod
+    def mark_reminder_postponed(cls, user_id: Optional[int], reminder_id: str) -> Optional[Dict[str, Any]]:
+        """Foydalanuvchi 'Keyin bajaraman' deb tanlaganda vazifani postponed holatiga o'tkazish."""
+        reminders = _load_all_reminders()
+        target = None
+        for r in reminders:
+            if r.get("id") == reminder_id and (user_id is None or r.get("user_id") == user_id):
+                r["status"] = "postponed"
+                r["postponed_at"] = datetime.now(TZ_TASHKENT).strftime("%d.%m.%Y %H:%M")
+                target = r
+                break
+
+        if target:
+            _save_all_reminders(reminders)
+            logger.info(f"Eslatma 'keyin bajariladigan' deb belgilandi: {reminder_id}")
+        return target
+
+    @classmethod
     def cancel_reminder(cls, user_id: int, reminder_id: str) -> bool:
         """Eslatmani bekor qilish."""
         reminders = _load_all_reminders()
         found = False
 
         for r in reminders:
-            if r.get("id") == reminder_id and r.get("user_id") == user_id:
+            if r.get("id") == reminder_id and (user_id is None or r.get("user_id") == user_id):
                 r["status"] = "cancelled"
                 found = True
                 break
@@ -151,37 +221,93 @@ class ReminderService:
     @classmethod
     async def check_and_trigger_due_reminders(cls, bot: Bot) -> int:
         """
-        Vaqti yetgan barcha eslatmalarni topib, Telegram orqali xabar yuboradi.
+        Vaqti yetgan yoki qayta eslatilishi kerak bo'lgan barcha vazifalarni yuboradi.
+
+        Qoidalar:
+        1. status in ['completed', 'cancelled'] bo'lsa aslo yuborilmaydi.
+        2. Sana o'zgarganda bugungi eslatmalar hisoblagichi (notify_count_today) 0 ga tushadi.
+        3. Bir kunda ko'pi bilan 2 marta eslatma yuboriladi (notify_count_today < 2).
+        4. Har soatda eslatiladi (kamida 3600 soniya o'tgan bo'lishi shart).
+        5. Har bir eslatmada [✅ Bajarildi] va [⏳ Keyin bajaraman] tugmalari chiqadi.
         """
         reminders = _load_all_reminders()
-        now_ts = int(datetime.now(TZ_TASHKENT).timestamp())
+        now_dt = datetime.now(TZ_TASHKENT)
+        now_ts = int(now_dt.timestamp())
+        today_str = now_dt.strftime("%Y-%m-%d")
 
         triggered_count = 0
 
         for r in reminders:
-            if r.get("status") == "pending" and r.get("due_timestamp", 0) <= now_ts:
+            status = r.get("status", "pending")
+            # Bajarilgan yoki bekor qilinganlarni chetlab o'tamiz
+            if status in ["completed", "cancelled"]:
+                continue
+
+            # Yangi kun bo'lsa hisoblagichni 0 ga tushiramiz
+            if r.get("last_notify_date") != today_str:
+                r["notify_count_today"] = 0
+
+            notify_count = r.get("notify_count_today", 0)
+            # Kunlik limit: maksimal 2 marta
+            if notify_count >= 2:
+                continue
+
+            due_ts = r.get("due_timestamp", 0)
+            last_notify_ts = r.get("last_notify_timestamp", 0)
+
+            should_notify = False
+            is_rereminder = False
+
+            # 1-holat: Hali birinchi marta eslatilmagan va vaqti kelgan
+            if notify_count == 0 and due_ts <= now_ts:
+                should_notify = True
+                is_rereminder = False
+
+            # 2-holat: Kechiktirilgan (postponed) yoki javob berilmagan (pending overdue) vazifaga 1 soatdan keyin qayta eslatma (2-marta)
+            elif notify_count == 1 and (status == "postponed" or (status == "pending" and due_ts <= now_ts)):
+                # Kamida 1 soat (3600 soniya) o'tganmi?
+                if (now_ts - last_notify_ts) >= 3600:
+                    should_notify = True
+                    is_rereminder = True
+
+            if should_notify:
                 chat_id = r.get("chat_id")
                 title = r.get("title", "Eslatma")
                 due_dt = r.get("due_datetime", "")
+                rem_id = r.get("id")
+
+                if is_rereminder:
+                    header = "⏰ <b>QAYTA ESLATMA (Bugungi 2-eslatma)</b> 🔔"
+                    note = "<i>Ushbu vazifa hali bajarilmadi. Iltimos, holatini belgilang:</i>"
+                else:
+                    header = "⏰ <b>ESLATMA VAQTI KELDI!</b> 🔔"
+                    note = "<i>Iltimos, vazifa holatini belgilang:</i>"
 
                 msg_text = (
-                    "⏰ <b>ESLATMA VAQTI KELDI!</b> 🔔\n\n"
+                    f"{header}\n\n"
                     f"📌 <b>Vazifa:</b> <b>{title}</b>\n"
                     f"🕒 <b>Belgilangan vaqt:</b> <code>{due_dt}</code>\n\n"
-                    "<i>Ushbu eslatma sizning xabaringiz asosida o'z vaqtida yetkazildi.</i>"
+                    f"{note}"
                 )
 
+                kb = get_reminder_notification_keyboard(rem_id)
+
                 try:
-                    await bot.send_message(chat_id, msg_text, parse_mode="HTML")
-                    r["status"] = "sent"
-                    r["sent_at"] = datetime.now(TZ_TASHKENT).strftime("%d.%m.%Y %H:%M:%S")
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=msg_text,
+                        parse_mode="HTML",
+                        reply_markup=kb
+                    )
+                    r["notify_count_today"] = notify_count + 1
+                    r["last_notify_date"] = today_str
+                    r["last_notify_timestamp"] = now_ts
+                    r["last_sent_at"] = now_dt.strftime("%d.%m.%Y %H:%M:%S")
                     triggered_count += 1
-                    logger.info(f"Eslatma muvaffaqiyatli yuborildi: {r.get('id')} -> {chat_id}")
+                    logger.info(f"Eslatma yuborildi ({r['notify_count_today']}-marta): {rem_id} -> {chat_id}")
                 except Exception as e:
                     logger.warning(f"Eslatma yuborishda xatolik ({chat_id}): {e}")
-                    # Agar foydalanuvchi botni bloklagan bo'lsa yoki xato bo'lsa
-                    r["status"] = "failed"
-                    r["error"] = str(e)
+                    r["last_error"] = str(e)
 
         if triggered_count > 0:
             _save_all_reminders(reminders)

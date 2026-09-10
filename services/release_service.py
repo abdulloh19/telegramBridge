@@ -17,19 +17,19 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 VERSION_FILE = DATA_DIR / "last_announced_version.txt"
 
-CURRENT_VERSION = "2.6.0"
+CURRENT_VERSION = "2.7.0"
 RELEASE_DATE = "10.09.2026"
 
 # AYNAN USHBU VERSIYADA KIRITILGAN HAQIQIY YANGILIKLAR RO'YXATI
 CURRENT_CHANGES: List[str] = [
+    "✅ <b>Eslatmalarni Tasdiqlash (Bajarildi / Keyin Bajaraman):</b> Eslatma kelganda «✅ Bajarildi» va «⏳ Keyin bajaraman» tugmalari orqali vazifani «Bajarilganlar» yoki «Keyin bajariladiganlar» bo'limlariga ajratish imkoniyati.",
+    "🔄 <b>Soatlik Qayta Eslatma va Kunlik Limit:</b> Kechiktirilgan yoki javob berilmagan vazifalar har soatda qayta eslatiladi va bezovta qilmaslik uchun kuniga ko'pi bilan 2 marta xabar yuboriladi.",
+    "⏰ <b>Soat va Daqiqali Eslatmalar (Hours & Minutes):</b> <i>«10:20 da uchrashuv bor»</i>, <i>«soat 10:20 da»</i>, <i>«10.20 da»</i>, <i>«10-20 da»</i>, <i>«10 yarimda»</i> kabi aniq daqiqalargacha bo'lgan eslatmalar matndan va ovozdan 100% ajratilib, belgilangan daqiqada aniq xabar yuboriladi.",
+    "📋 <b>Eslatmalar Paneli (/reminders):</b> Barcha faol, keyin bajariladigan va bajarilgan vazifalarni toifalar bo'yicha ko'rish va boshqarish.",
     "👤 <b>Unikal Foydalanuvchilar va Dashboard:</b> Foydalanuvchilar bazaga unikal tarzda yoziladi va o'rganilgan so'zlar statistikasi Web Dashboard bilan to'liq sinxronlashtirildi.",
     "📢 <b>Kafolatlangan Ommaviy Xabarnoma (Broadcast):</b> Yangilanishlar barcha foydalanuvchilarga xatosiz, tezkor va ishonchli yetkaziladi.",
-    "⏰ <b>Soat va Daqiqali Eslatmalar (Hours & Minutes):</b> <i>«10:20 da uchrashuv bor»</i>, <i>«soat 10:20 da»</i>, <i>«10.20 da»</i>, <i>«10-20 da»</i>, <i>«10 yarimda»</i> kabi aniq daqiqalargacha bo'lgan eslatmalar matndan va ovozdan 100% ajratilib, belgilangan daqiqada aniq xabar yuboriladi.",
-    "📋 <b>Eslatmalar Paneli (/reminders):</b> Barcha faol eslatmalarni qolgan daqiqalarigacha ko'rish va boshqarish imkoniyati.",
     "🎤 <b>Kengaytirilgan Ovozli Xabarlar (STT):</b> Google Gemini 3.6 Flash orqali qisqa va juda uzun audiolarni xatosiz matnga o'girish.",
-    "📝 <b>Ichki Qaydlar Tizimi (/notes):</b> Transkripsiya qilingan nutq va matnlarni bot xotirasida saqlash.",
-    "🗣️ <b>5 ta Hayotiy Kundalik Dialog:</b> Taksi, Sayohat, Bozor, Kafe va Dorixona mavzulari bo'yicha interaktiv dialog mashqlari.",
-    "📊 <b>Progress & Ketma-ketlik:</b> Dialog va darslarda to'xtagan bosqichingiz xotirada to'liq saqlanadi."
+    "📝 <b>Ichki Qaydlar Tizimi (/notes):</b> Transkripsiya qilingan nutq va matnlarni bot xotirasida saqlash."
 ]
 
 

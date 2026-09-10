@@ -27,67 +27,145 @@ router = Router()
 _pending_text_reminders: dict = {}
 
 
-def _build_reminders_list_keyboard(reminders: list) -> InlineKeyboardMarkup:
-    """Faol eslatmalar uchun o'chirish tugmalari."""
+def _build_categorized_reminders_view(user_id: int):
+    """
+    Foydalanuvchining barcha eslatmalarini 3 toifaga ajratib ko'rsatadi:
+    1. Kutilayotganlar (pending)
+    2. Keyin bajariladiganlar (postponed)
+    3. Bajarilganlar (completed)
+    """
+    cat = ReminderService.get_categorized_reminders(user_id)
+    pending = cat["pending"]
+    postponed = cat["postponed"]
+    completed = cat["completed"]
+
+    total = len(pending) + len(postponed) + len(completed)
+    if total == 0:
+        return (
+            "⏰ <b>Sizda hozircha eslatmalar yo'q.</b>\n\n"
+            "💡 <b>Yangi eslatma o'rnatish:</b>\n"
+            "• Ovozli xabarda vaqtni ayting (masalan: <i>«10:20 da uchrashuv bor»</i>)\n"
+            "• Yoki yozing: <code>/remind 10:20 da uchrashuv bor</code>\n"
+            "• Yoki to'g'ridan-to'g'ri: <i>«10:20 da uchrashuv bor»</i>",
+            None
+        )
+
+    now_ts = int(get_current_tashkent_time().timestamp())
+    lines = []
     buttons = []
-    for r in reminders[:10]:
-        title = r.get("title", "Eslatma")
-        if len(title) > 22:
-            title = title[:19] + "..."
-        time_str = r.get("due_datetime", "").split()[-1]
-        rid = r.get("id")
-        buttons.append([
-            InlineKeyboardButton(text=f"⏰ {time_str} — {title}", callback_data=f"rnoop_{rid}"),
-            InlineKeyboardButton(text="🗑️ Bekor qilish", callback_data=f"rcancel_{rid}")
-        ])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    # 1. Faol / Kutilayotgan eslatmalar
+    if pending:
+        lines.append(f"⏰ <b>Kutilayotgan eslatmalar ({len(pending)} ta):</b>")
+        for i, r in enumerate(pending[:6], 1):
+            due_ts = r.get("due_timestamp", 0)
+            diff_sec = max(0, due_ts - now_ts)
+            hours_left = diff_sec // 3600
+            mins_left = (diff_sec % 3600) // 60
+            time_left = f"<i>({hours_left}s {mins_left}d qoldi)</i>" if hours_left > 0 else f"<i>({mins_left} daqiqa qoldi)</i>"
+            lines.append(f"  {i}. <b>{r.get('due_datetime')}</b> — <b>{r.get('title')}</b> {time_left}")
+            rid = r.get("id")
+            title_cut = r.get("title", "")[:16]
+            buttons.append([
+                InlineKeyboardButton(text=f"✅ Bajarildi: {title_cut}", callback_data=f"rc_done_{rid}"),
+                InlineKeyboardButton(text="🗑️", callback_data=f"rcancel_{rid}")
+            ])
+        lines.append("")
+
+    # 2. Keyin bajariladiganlar (Postponed)
+    if postponed:
+        lines.append(f"⏳ <b>Keyin bajariladiganlar ({len(postponed)} ta):</b>")
+        for i, r in enumerate(postponed[:6], 1):
+            lines.append(f"  {i}. <b>{r.get('due_datetime')}</b> — <b>{r.get('title')}</b> <i>(kechiktirilgan)</i>")
+            rid = r.get("id")
+            title_cut = r.get("title", "")[:16]
+            buttons.append([
+                InlineKeyboardButton(text=f"✅ Bajarildi: {title_cut}", callback_data=f"rc_done_{rid}"),
+                InlineKeyboardButton(text="🗑️", callback_data=f"rcancel_{rid}")
+            ])
+        lines.append("")
+
+    # 3. Bajarilganlar (Completed)
+    if completed:
+        lines.append(f"✅ <b>Bajarilgan vazifalar ({len(completed)} ta):</b>")
+        for i, r in enumerate(completed[:6], 1):
+            done_at = r.get("completed_at") or r.get("due_datetime", "")
+            lines.append(f"  {i}. <s>{r.get('title')}</s> <i>(yakunlandi: {done_at})</i>")
+
+    text = "\n".join(lines).strip()
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+    return text, kb
 
 
 @router.message(Command("reminders", "eslatmalarim"))
 async def cmd_list_reminders(message: Message):
-    """Foydalanuvchining barcha faol eslatmalarini ko'rsatish."""
+    """Foydalanuvchining barcha toifadagi eslatmalarini ko'rsatish."""
     user_id = message.from_user.id
-    rems = ReminderService.get_user_reminders(user_id, status="pending")
+    text, kb = _build_categorized_reminders_view(user_id)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
-    if not rems:
-        await message.answer(
-            "⏰ <b>Sizda hozircha faol eslatmalar yo'q.</b>\n\n"
-            "💡 <b>Yangi eslatma o'rnatish:</b>\n"
-            "• Ovozli xabarda vaqtni ayting (masalan: <i>«Soat 10:00 da majlis, keyin 14:00 da dars»</i>)\n"
-            "• Yoki matn orqali yozing: <code>/remind Ertaga soat 9:00 da hisobot</code>",
-            parse_mode="HTML"
-        )
-        return
 
-    now_ts = int(get_current_tashkent_time().timestamp())
-    lines = []
-    for i, r in enumerate(rems, 1):
-        due_ts = r.get("due_timestamp", 0)
-        diff_sec = max(0, due_ts - now_ts)
-        hours_left = diff_sec // 3600
-        mins_left = (diff_sec % 3600) // 60
+@router.callback_query(F.data.startswith("rc_done_"))
+async def callback_reminder_done(callback: CallbackQuery):
+    """Foydalanuvchi 'Bajarildi' deb tanlaganda."""
+    rem_id = callback.data.replace("rc_done_", "")
+    user_id = callback.from_user.id
 
-        time_left_str = ""
-        if hours_left > 0:
-            time_left_str = f"<i>(qolgan vaqt: {hours_left} soat {mins_left} daqiqa)</i>"
+    updated = ReminderService.mark_reminder_completed(user_id, rem_id)
+    if updated:
+        await callback.answer("✅ Vazifa bajarildi deb saqlandi!")
+        title = updated.get("title", "Vazifa")
+        comp_at = updated.get("completed_at", "")
+
+        msg_text = callback.message.text or ""
+        # Agar bu to'g'ridan-to'g'ri bildirishnoma xabaridan bosilgan bo'lsa
+        if "ESLATMA VAQTI KELDI" in msg_text or "QAYTA ESLATMA" in msg_text:
+            done_msg = (
+                "✅ <b>Vazifa muvaffaqiyatli bajarildi!</b> 🎉\n\n"
+                f"📌 <b>Vazifa:</b> <b>{title}</b>\n"
+                f"🕒 <i>Bajarilgan vaqt: {comp_at}</i>\n\n"
+                "<i>Vazifa «Bajarilganlar» bo'limiga o'tkazildi.</i>"
+            )
+            try:
+                await callback.message.edit_text(done_msg, parse_mode="HTML")
+            except Exception:
+                pass
         else:
-            time_left_str = f"<i>(qolgan vaqt: {mins_left} daqiqa)</i>"
+            # Agar bu /reminders ro'yxati ichida bosilgan bo'lsa, ro'yxatni yangilaymiz
+            text, kb = _build_categorized_reminders_view(user_id)
+            try:
+                await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+            except Exception:
+                pass
+    else:
+        await callback.answer("⚠️ Vazifa topilmadi yoki allaqachon yakunlangan.")
 
-        lines.append(
-            f"{i}. ⏰ <b>{r.get('due_datetime')}</b> — <b>{r.get('title')}</b>\n   └ {time_left_str}"
+
+@router.callback_query(F.data.startswith("rc_later_"))
+async def callback_reminder_later(callback: CallbackQuery):
+    """Foydalanuvchi 'Keyin bajaraman' deb tanlaganda."""
+    rem_id = callback.data.replace("rc_later_", "")
+    user_id = callback.from_user.id
+
+    updated = ReminderService.mark_reminder_postponed(user_id, rem_id)
+    if updated:
+        await callback.answer("⏳ Keyin bajariladiganlarga o'tkazildi.")
+        title = updated.get("title", "Vazifa")
+        later_msg = (
+            "⏳ <b>Vazifa keyinga qoldirildi!</b>\n\n"
+            f"📌 <b>Vazifa:</b> <b>{title}</b>\n\n"
+            "<i>Vazifa «Keyin bajariladiganlar» bo'limiga o'tkazildi.\n"
+            "Tizim sizga har soatda qayta eslatib turadi (kuniga 2 martagacha).</i>"
         )
-
-    text = (
-        f"🔔 <b>Sizning faol eslatmalaringiz ({len(rems)} ta):</b>\n\n"
-        + "\n\n".join(lines)
-        + "\n\n<i>Belgilangan vaqtda bot sizga avtomatik xabar yuboradi.</i>"
-    )
-
-    await message.answer(
-        text,
-        parse_mode="HTML",
-        reply_markup=_build_reminders_list_keyboard(rems)
-    )
+        later_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Hozir bajarildi", callback_data=f"rc_done_{rem_id}")]
+        ])
+        try:
+            await callback.message.edit_text(later_msg, parse_mode="HTML", reply_markup=later_kb)
+        except Exception:
+            pass
+    else:
+        await callback.answer("⚠️ Vazifa topilmadi.")
 
 
 @router.callback_query(F.data.startswith("rcancel_"))
@@ -98,19 +176,15 @@ async def callback_cancel_reminder(callback: CallbackQuery):
 
     success = ReminderService.cancel_reminder(user_id, rem_id)
     if success:
-        await callback.answer("✅ Eslatma bekor qilindi.")
+        await callback.answer("✅ Eslatma o'chirildi.")
     else:
         await callback.answer("⚠️ Eslatma topilmadi.")
 
-    rems = ReminderService.get_user_reminders(user_id, status="pending")
-    if not rems:
-        await callback.message.edit_text(
-            "⏰ <b>Barcha eslatmalar bekor qilindi. Faol eslatmalar qolmadi.</b>",
-            parse_mode="HTML"
-        )
-        return
-
-    await callback.message.edit_reply_markup(reply_markup=_build_reminders_list_keyboard(rems))
+    text, kb = _build_categorized_reminders_view(user_id)
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data.startswith("rnoop_"))
