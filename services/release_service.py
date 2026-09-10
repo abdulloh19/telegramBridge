@@ -24,7 +24,7 @@ RELEASE_DATE = "10.09.2026"
 CURRENT_CHANGES: List[str] = [
     "👤 <b>Unikal Foydalanuvchilar va Dashboard:</b> Foydalanuvchilar bazaga unikal tarzda yoziladi va o'rganilgan so'zlar statistikasi Web Dashboard bilan to'liq sinxronlashtirildi.",
     "📢 <b>Kafolatlangan Ommaviy Xabarnoma (Broadcast):</b> Yangilanishlar barcha foydalanuvchilarga xatosiz, tezkor va ishonchli yetkaziladi.",
-    "⏰ <b>Bir Nechta Vaqtli Eslatmalar (Multiple Reminders):</b> Bitta ovozli yoki matnli xabarda bir nechta vaqt aytilsa (masalan: <i>«10:00 da majlis, 14:00 da dars»</i>), har biri alohida ajratilib, belgilangan vaqtda aniq Telegram bildirishnomasi (notification) yuboriladi.",
+    "⏰ <b>Soat va Daqiqali Eslatmalar (Hours & Minutes):</b> <i>«10:20 da uchrashuv bor»</i>, <i>«soat 10:20 da»</i>, <i>«10.20 da»</i>, <i>«10-20 da»</i>, <i>«10 yarimda»</i> kabi aniq daqiqalargacha bo'lgan eslatmalar matndan va ovozdan 100% ajratilib, belgilangan daqiqada aniq xabar yuboriladi.",
     "📋 <b>Eslatmalar Paneli (/reminders):</b> Barcha faol eslatmalarni qolgan daqiqalarigacha ko'rish va boshqarish imkoniyati.",
     "🎤 <b>Kengaytirilgan Ovozli Xabarlar (STT):</b> Google Gemini 3.6 Flash orqali qisqa va juda uzun audiolarni xatosiz matnga o'girish.",
     "📝 <b>Ichki Qaydlar Tizimi (/notes):</b> Transkripsiya qilingan nutq va matnlarni bot xotirasida saqlash.",

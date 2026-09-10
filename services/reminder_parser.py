@@ -49,16 +49,16 @@ async def parse_with_gemini(text: str) -> List[Dict[str, Any]]:
 Hozirgi sana va vaqt: {now_str} (Toshkent vaqti, UTC+5).
 
 Muhim qoidalar:
-1. Agar matnda bir nechta vaqt ko'rsatilgan bo'lsa (masalan: "Soat 10:00 da majlis, keyin 14:00 da dars"), HAR BIRINI alohida obyekt qilib ajrating.
+1. Har qanday vaqt formatini (masalan: "10:20 da uchrashuv bor", "soat 10:20 da", "10.20 da", "10-20 da", "10 dan 20 daqiqa o'tganda", "10 yarimda", "14:45 da") to'liq va aniq tushuning. Agar matnda bir nechta vaqt ko'rsatilgan bo'lsa (masalan: "10:20 da uchrashuv bor, keyin 14:00 da dars"), HAR BIRINI alohida obyekt qilib ajrating.
 2. Agar sana aytilmagan bo'lsa, bugungi sana deb hisoblang. Agar aytilgan vaqt bugungi hozirgi vaqtdan o'tib ketgan bo'lsa (va "bugun" deb ta'kidlanmagan bo'lsa), ertangi kunga o'tkazing.
-3. Vaqtni qat'iy "HH:MM" (24 soatlik formatda, masalan "10:00", "14:30", "20:00") formatida yozing.
-4. "title" ga qisqa va aniq nima qilish kerakligini yozing (masalan "Majlis", "Dars", "Doktorga borish").
+3. Vaqtni qat'iy "HH:MM" (soat va daqiqa ko'rinishida, masalan "10:20", "14:30", "10:00") formatida yozing. Soat bilan birga aytilgan daqiqalarni (masalan 10:20) aslo tashlab yubormang.
+4. "title" ga qisqa va aniq nima qilish kerakligini yozing (masalan "uchrashuv bor", "Majlis", "Dars").
 5. Faqat toza JSON array formatida javob bering, boshqa hech qanday izoh qo'shmang. Agar vaqt topilmasa [] qaytaring.
 
 Format:
 [
-  {{"title": "Majlis", "date": "YYYY-MM-DD", "time": "HH:MM"}},
-  {{"title": "Dars", "date": "YYYY-MM-DD", "time": "HH:MM"}}
+  {{"title": "uchrashuv bor", "date": "YYYY-MM-DD", "time": "10:20"}},
+  {{"title": "Dars", "date": "YYYY-MM-DD", "time": "14:00"}}
 ]
 
 Matn: {text}"""
@@ -118,19 +118,63 @@ Matn: {text}"""
         return []
 
 
+def _extract_time_from_phrase(p: str):
+    """
+    Matn parchasidan soat va daqiqani turli formatlarda ajratib oladi:
+    - 10:20, 10.20, 10-20
+    - 10 dan 20 daqiqa o'tganda
+    - 10 yarimda
+    - 20 kam 11 da
+    - 10 da, soat 10 da
+    """
+    # 1. HH:MM, HH.MM, HH-MM (soat va daqiqa, masalan 10:20 da)
+    m = re.search(r'(?:soat\s+)?(\d{1,2})[:.-](\d{2})\s*(?:da|de|ga|lardami?|gacha)?(?:\s*(?:am|pm))?', p, re.IGNORECASE)
+    if m:
+        return int(m.group(1)), int(m.group(2)), m.group(0)
+
+    # 2. 10 dan 20 daqiqa/minut o'tganda
+    m = re.search(r'(?:soat\s+)?(\d{1,2})\s*dan\s*(\d{1,2})\s*(?:daqiqa|minut|ta)?\s*o[^\w\s]?tganda', p, re.IGNORECASE)
+    if m:
+        return int(m.group(1)), int(m.group(2)), m.group(0)
+
+    # 3. 10 yarimda (10:30)
+    m = re.search(r'(?:soat\s+)?(\d{1,2})\s*yarim(?:da)?', p, re.IGNORECASE)
+    if m:
+        return int(m.group(1)), 30, m.group(0)
+
+    # 4. 20 kam 11 da
+    m = re.search(r'(\d{1,2})\s*kam\s*(\d{1,2})(?:da)?', p, re.IGNORECASE)
+    if m:
+        diff, target_h = int(m.group(1)), int(m.group(2))
+        return (target_h - 1) % 24, 60 - diff, m.group(0)
+
+    # 5. 11 ga 20 daqiqa qolganda
+    m = re.search(r'(\d{1,2})\s*ga\s*(\d{1,2})\s*(?:daqiqa|minut|ta)?\s*qolganda', p, re.IGNORECASE)
+    if m:
+        target_h, diff = int(m.group(1)), int(m.group(2))
+        return (target_h - 1) % 24, 60 - diff, m.group(0)
+
+    # 6. 10 da / soat 10 da
+    m = re.search(r'(?:soat\s+)?(\d{1,2})\s*(?:da|de|ga)\b(?:\s*(?:am|pm))?', p, re.IGNORECASE)
+    if m:
+        return int(m.group(1)), 0, m.group(0)
+
+    # 7. soat 10
+    m = re.search(r'soat\s+(\d{1,2})\b(?:\s*(?:am|pm))?', p, re.IGNORECASE)
+    if m:
+        return int(m.group(1)), 0, m.group(0)
+
+    return None
+
+
 def parse_with_regex(text: str) -> List[Dict[str, Any]]:
     """Mahalliy Regex/Qoidali parser (Gemini ishlamay qolganda zahira usul)."""
     now = get_current_tashkent_time()
     results = []
 
-    # Matnni qismlarga ajratamiz (vergul, nuqta, "keyin", "so'ng", "va")
+    # Matnni qismlarga ajratamiz (vergul, nuqta-vergul, yangi qator, "keyin", "so'ng", "va")
     delimiters = r"[,;\n]|\s+(?:keyin|so'ng|va|undanso'ng|then|потом|а\s+затем)\s+"
     parts = re.split(delimiters, text, flags=re.IGNORECASE)
-
-    time_regex = re.compile(
-        r"(?:soat\s+)?(\d{1,2})(?:[:.](\d{2}))?\s*(?:da|de|ga)?(?:\s*(?:am|pm))?",
-        re.IGNORECASE
-    )
 
     base_date = now.date()
     text_lower = text.lower()
@@ -144,11 +188,9 @@ def parse_with_regex(text: str) -> List[Dict[str, Any]]:
         if not clean_p:
             continue
 
-        match = time_regex.search(clean_p)
-        if match:
-            h_str, m_str = match.group(1), match.group(2)
-            hour = int(h_str)
-            minute = int(m_str) if m_str else 0
+        extracted = _extract_time_from_phrase(clean_p)
+        if extracted:
+            hour, minute, matched_time_str = extracted
 
             # 24-soatlik normalizatsiya (agar "kechqurun" bo'lsa)
             p_lower = clean_p.lower()
@@ -159,7 +201,7 @@ def parse_with_regex(text: str) -> List[Dict[str, Any]]:
 
             if 0 <= hour <= 23 and 0 <= minute <= 59:
                 # Sarlavhani ajratish (vaqt so'zlarini olib tashlash)
-                title = time_regex.sub("", clean_p).strip()
+                title = clean_p.replace(matched_time_str, "").strip()
                 title = re.sub(r"\b(?:bugun|ertaga|indin|soat|da|de|ga)\b", "", title, flags=re.IGNORECASE).strip()
                 title = re.sub(r"\s+", " ", title).strip()
 

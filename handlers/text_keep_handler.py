@@ -11,7 +11,8 @@ Eslatmalar va Rejalar Handleri (Notes & Reminders Handler)
 import time
 import logging
 from aiogram import Router, F
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from services.notes_service import NotesService
@@ -309,3 +310,67 @@ async def callback_back_to_notes(callback: CallbackQuery):
         parse_mode="HTML",
         reply_markup=_build_notes_list_keyboard(notes)
     )
+
+
+# =========================================================================
+# Oddiy matnli xabarlardan vaqt va eslatmalarni avtomatik aniqlash
+# =========================================================================
+
+@router.message(F.text, StateFilter(None))
+async def handle_plain_text_message(message: Message, state: FSMContext):
+    """
+    Foydalanuvchi oddiy matn yuborganda (masalan: «10:20 da uchrashuv bor» yoki «soat 10:20 da majlis»):
+    Agar matnda vaqt aniqlansa, darhol eslatma o'rnatiladi va tasdiq xabari yuboriladi.
+    """
+    text = (message.text or "").strip()
+    if not text or text.startswith("/"):
+        return
+
+    # Havolalarni media downloader ga berish uchun chetlab o'tamiz
+    if text.startswith("http://") or text.startswith("https://") or "t.me/" in text:
+        return
+
+    # Reply menyu tugmalari
+    ignored_menu_texts = [
+        "📥 Video Yuklash (/dl)",
+        "🎵 Faqat MP3 (/mp3)",
+        "🧹 Hisob Tozalash (/cleaner)",
+        "ℹ️ Qo'llanma / Yordam",
+        "📋 Eslatmalarim"
+    ]
+    if text in ignored_menu_texts:
+        return
+
+    reminders = await parse_multiple_reminders(text)
+    if not reminders:
+        return
+
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
+    created = ReminderService.add_multiple_reminders(
+        user_id=user_id,
+        chat_id=chat_id,
+        items=reminders,
+        source="text"
+    )
+
+    rem_summary = format_reminders_summary(reminders)
+
+    buttons = []
+    for r in created:
+        rid = r.get("id")
+        t_str = r.get("time", "")
+        buttons.append([
+            InlineKeyboardButton(text=f"🗑️ Bekor qilish ({t_str})", callback_data=f"rcancel_{rid}")
+        ])
+
+    await message.reply(
+        f"✅ <b>{len(created)} ta eslatma muvaffaqiyatli o'rnatildi! 🔔</b>\n\n"
+        f"{rem_summary}\n\n"
+        "⚡ <i>Belgilangan vaqtda bot sizga avtomatik eslatma yuboradi.</i>\n\n"
+        "Barcha eslatmalar: <b>/reminders</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+    )
+
