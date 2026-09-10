@@ -41,24 +41,34 @@ async def setup_bot_commands(bot: Bot):
         BotCommand(command="cleaner", description="🧹 Telegram hisobni tozalash"),
         BotCommand(command="help", description="📖 To'liq qo'llanma"),
     ]
-
     await bot.set_my_commands(commands)
 
 
 async def notify_admins_on_startup(bot: Bot):
-    """Bot ishga tushganda adminlarga xabar yuborish."""
+    """Bot ishga tushganda adminlarga hozirgi sessiyada qo'shilgan yangiliklar haqida xabar."""
     if not ADMIN_IDS:
-        logger.warning("DIQQAT: .env faylida ADMIN_IDS ko'rsatilmagan! Bot faqat adminlar uchun ishlaydi.")
+        logger.warning("DIQQAT: .env faylida ADMIN_IDS ko'rsatilmagan!")
         return
 
+    import datetime
+    now = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
+
     text = (
-        "🟢 <b>Bot muvaffaqiyatli yangilandi va ishga tushdi! 🚀</b>\n\n"
-        "✨ <b>Yangi Imkoniyatlar:</b>\n"
-        "• 🎵 <b>Alohida MP3 Bo'limi</b> (/mp3 yoki menyudan)\n"
-        "• 📥 <b>To'g'ridan-to'g'ri Bot Chatga Yetkazish</b> (Izbrannoega emas)\n"
-        "• 🎬 + 🎵 <b>Video bilan birga 320kbps MP3 ham keladi</b>\n"
-        "• 🧹 <b>Telegram Hisob Tozalovchi</b> (/cleaner)\n\n"
-        "👉 Yangilangan menyuni ko'rish uchun <b>/start</b> bosing!"
+        f"🟢 <b>Bot yangilandi va ishga tushdi!</b> 🚀  <i>({now})</i>\n\n"
+        "📋 <b>Hozirgi sessiyada qo'shilgan yangiliklar:</b>\n\n"
+        "🎤 <b>Ovozli Xabar → STT + Keep Tasdiqi:</b>\n"
+        "   • Ovoz yuborilsa Gemini AI matnga o'giradi\n"
+        "   • <i>«Buni Keep'ga saqlaymizmi?»</i> ✅/❌ so'rovi chiqadi\n"
+        "   • Ha bosilsa Keep + Calendar'ga avtomatik saqlanadi\n\n"
+        "📝 <b>Matn Xabar → Keep Saqlash:</b>\n"
+        "   • Oddiy matn yozsangiz <i>«Keep'ga saqlaymizmi?»</i> so'rovi\n"
+        "   • Tasdiqda Google Keep'ga avtomatik qo'shiladi\n\n"
+        "📅 <b>Aqlli Sana/Vaqt Aniqlash:</b>\n"
+        "   • <i>«Ertaga soat 10 da uchrashuv»</i> → Calendar event avtomatik\n\n"
+        "⚠️ <b>Keep/Calendar ishlashi uchun .env:</b>\n"
+        "   <code>GOOGLE_KEEP_EMAIL</code>\n"
+        "   <code>GOOGLE_KEEP_MASTER_TOKEN</code>\n"
+        "   <code>GOOGLE_CALENDAR_CREDENTIALS_JSON</code>"
     )
 
     for admin_id in ADMIN_IDS:
@@ -130,7 +140,7 @@ async def main():
     dp.message.middleware(auth_middleware)
     dp.callback_query.middleware(auth_middleware)
 
-    # Router'lar: start, cleaner, media_downloader, voice_handler, text_keep_handler
+    # Router'lar (tartib muhim — yuqoridagi handler avval ishga tushadi)
     dp.include_router(start.router)
     dp.include_router(cleaner.router)
     dp.include_router(media_downloader.router)
