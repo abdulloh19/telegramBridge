@@ -14,7 +14,7 @@ from aiogram.types import BotCommand
 
 from config import BOT_TOKEN, ADMIN_IDS
 from middlewares.auth import AuthMiddleware
-from handlers import start, cleaner, media_downloader, voice_handler
+from handlers import start, cleaner, media_downloader, voice_handler, text_keep_handler
 from utils.logger import logger
 from utils.helpers import escape_html
 
@@ -130,11 +130,12 @@ async def main():
     dp.message.middleware(auth_middleware)
     dp.callback_query.middleware(auth_middleware)
 
-    # Router'lar: start, cleaner, media_downloader, voice_handler
+    # Router'lar: start, cleaner, media_downloader, voice_handler, text_keep_handler
     dp.include_router(start.router)
     dp.include_router(cleaner.router)
     dp.include_router(media_downloader.router)
-    dp.include_router(voice_handler.router)  # 🎤 STT + Google Keep + Calendar
+    dp.include_router(voice_handler.router)       # 🎤 STT + Keep + Calendar tasdiqi
+    dp.include_router(text_keep_handler.router)   # 📝 Matn xabar → Keep tasdiqi
 
     # Buyruqlar menyusi va xabarnoma
     await setup_bot_commands(bot)

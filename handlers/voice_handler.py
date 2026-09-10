@@ -1,24 +1,27 @@
 """
 Ovozli Xabar Handleri
 ======================
-Foydalanuvchi yuborgan voice/audio xabarlarni qabul qilib:
-  1. Matnga aylantiradi (STT)
-  2. Google Keep ga saqlaydi
-  3. Agar vaqt/sana bo'lsa, Google Calendar ga event qo'shadi
-  4. Foydalanuvchiga transkripsiyani qaytaradi
+1. Voice/audio xabar qabul qilinadi
+2. STT orqali matnga o'giriladi
+3. "Buni Google Keep'ga saqlaymizmi?" so'rovi chiqariladi
+4. Ha bosilsa => Keep ga saqlaydi
 """
 
 import os
 import logging
 import tempfile
 
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import BaseFilter
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+# Vaqtincha xabar matnlarini saqlash (chat_id -> transkripsiya)
+# (To'liq FSM o'rniga oddiy dict ishlatamiz)
+_pending_transcriptions: dict = {}
 
 
 class VoiceFilter(BaseFilter):
@@ -26,22 +29,28 @@ class VoiceFilter(BaseFilter):
         return message.voice is not None or message.audio is not None
 
 
+def _build_keep_confirm_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    """Ha / Yo'q tugmalari."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Ha, saqlash", callback_data=f"keep_save_{chat_id}"),
+            InlineKeyboardButton(text="❌ Yo'q", callback_data=f"keep_skip_{chat_id}"),
+        ]
+    ])
+
+
 @router.message(VoiceFilter())
 async def handle_voice_message(message: Message):
     """Ovozli yoki audio xabarni qayta ishlaydi."""
     try:
         from services.stt_service import transcribe_voice, extract_datetime_from_text
-        from services.google_keep_service import save_voice_and_transcription
-        from services.google_calendar_service import create_event_from_text_info
 
-        # Foydalanuvchi ma'lumotlari
         user = message.from_user
         sender = user.first_name or user.username or ("ID" + str(user.id))
-        sender_mention = user.mention_html() if hasattr(user, "mention_html") else sender
+        chat_id = message.chat.id
 
-        # Jarayonni xabari
         processing_msg = await message.answer(
-            "🎤 <b>Ovozli xabar qabul qilindi!</b>\n"
+            "<b>🎤 Ovozli xabar qabul qilindi!</b>\n"
             "⏳ Matnga aylantirilmoqda...",
             parse_mode="HTML",
         )
@@ -67,83 +76,149 @@ async def handle_voice_message(message: Message):
 
         # STT
         transcription = await transcribe_voice(tmp_path)
-        is_success = not transcription.startswith("Ovozli xabarni matnga")
+        is_failed = transcription.startswith("Ovozli xabarni matnga")
 
-        # Foydalanuvchiga natija
-        if is_success:
-            resp_text = (
-                "\U0001f4DD <b>Transkripsiya natijasi:</b>\n\n"
-                + transcription
-                + "\n\n"
+        if is_failed:
+            await processing_msg.edit_text(
+                "<b>⚠️ Transkripsiya muvaffaqiyatsiz:</b>\n" + transcription,
+                parse_mode="HTML",
             )
-        else:
-            resp_text = (
-                "\u26a0\ufe0f <b>Transkripsiya muvaffaqiyatsiz:</b>\n"
-                + transcription
-            )
-
-        await processing_msg.edit_text(resp_text, parse_mode="HTML")
-
-        if not is_success:
-            # Vaqtinchalik faylni o'chirish
             try:
                 os.unlink(tmp_path)
             except Exception:
                 pass
             return
 
-        # Google Keep ga saqlash
-        keep_result = await save_voice_and_transcription(
-            audio_path=tmp_path,
-            transcription=transcription,
-            sender_name=sender,
-        )
+        # Transkripsiyani vaqtincha saqlaymiz
+        _pending_transcriptions[chat_id] = {
+            "text": transcription,
+            "audio_path": tmp_path,
+            "sender": sender,
+        }
 
-        keep_info = ""
-        if keep_result.get("success"):
-            keep_info = (
-                "\n\U0001f4D2 <b>Google Keep ga saqlandi:</b> "
-                + "<a href=\"" + keep_result.get("url", "#") + "\">Keep'da ochish</a>"
-            )
-        else:
-            keep_info = "\n\u26a0\ufe0f Google Keep ga saqlab bo'lmadi (" + keep_result.get("error", "?") + ")"
-
-        # Vaqt/sana aniqlash va Calendar event
+        # Vaqt/sana aniqlash
+        from services.stt_service import extract_datetime_from_text
         dt_info = extract_datetime_from_text(transcription)
-        cal_info = ""
+        cal_note = ""
         if dt_info:
-            cal_result = await create_event_from_text_info(dt_info)
-            if cal_result.get("success"):
-                cal_info = (
-                    "\n\U0001f4C5 <b>Google Calendar ga qo'shildi:</b> "
-                    + dt_info.get("date", "") + " " + dt_info.get("time", "")
-                    + " — " + "<a href=\"" + cal_result.get("link", "#") + "\">Calendar'da ko'rish</a>"
-                )
-            else:
-                if "credentials" in cal_result.get("error", "") or "library" in cal_result.get("error", ""):
-                    cal_info = ""  # sozlanmagan — jim o'tkazish
-                else:
-                    cal_info = "\n\u26a0\ufe0f Calendar event qo'sholmadi: " + cal_result.get("error", "")
-
-        # Yakuniy xabar
-        if keep_info or cal_info:
-            await message.answer(
-                keep_info + cal_info,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
+            cal_note = (
+                "\n\n<b>📅 Vaqt/sana aniqlandi:</b> "
+                + dt_info.get("date", "") + " " + dt_info.get("time", "")
+                + "\n<i>Keep'ga saqlanganda Calendar'ga ham qo'shiladi.</i>"
             )
 
-        # Vaqtinchalik faylni o'chirish
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
+        # Foydalanuvchiga natija + tasdiq tugmasi
+        await processing_msg.edit_text(
+            "<b>📝 Transkripsiya natijasi:</b>\n\n"
+            + transcription
+            + cal_note
+            + "\n\n<b>💾 Buni Google Keep'ga saqlaymizmi?</b>",
+            parse_mode="HTML",
+            reply_markup=_build_keep_confirm_keyboard(chat_id),
+        )
 
     except Exception as e:
         logger.error("Ovozli xabar handleri xatosi: " + str(e))
         try:
-            await message.answer(
-                "\u274c Ovozli xabarni qayta ishlashda xatolik yuz berdi."
-            )
+            await message.answer("❌ Ovozli xabarni qayta ishlashda xatolik yuz berdi.")
         except Exception:
             pass
+
+
+@router.callback_query(F.data.startswith("keep_save_"))
+async def callback_keep_save(callback: CallbackQuery):
+    """Foydalanuvchi 'Ha' ni bosdi — Keep ga saqlash."""
+    await callback.answer()
+    chat_id = callback.message.chat.id
+    pending = _pending_transcriptions.pop(chat_id, None)
+
+    if not pending:
+        await callback.message.edit_text(
+            "⚠️ Saqlash muddati tugadi. Ovozni qayta yuboring.",
+        )
+        return
+
+    transcription = pending["text"]
+    audio_path = pending.get("audio_path", "")
+    sender = pending.get("sender", "Foydalanuvchi")
+
+    # Editing tugmasini o'chirish
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+    saving_msg = await callback.message.answer("⏳ Google Keep ga saqlanmoqda...")
+
+    try:
+        from services.google_keep_service import save_voice_and_transcription
+        keep_result = await save_voice_and_transcription(
+            audio_path=audio_path,
+            transcription=transcription,
+            sender_name=sender,
+        )
+
+        if keep_result.get("success"):
+            url = keep_result.get("url", "#")
+            await saving_msg.edit_text(
+                "<b>✅ Google Keep'ga saqlandi!</b>\n"
+                + '<a href="' + url + '">Keep\'da ochish</a>',
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        else:
+            err = keep_result.get("error", "nomalum")
+            if "credentials" in err:
+                await saving_msg.edit_text(
+                    "⚠️ Google Keep hali sozlanmagan.\n"
+                    "<i>(.env faylida GOOGLE_KEEP_EMAIL va GOOGLE_KEEP_MASTER_TOKEN kerak)</i>",
+                    parse_mode="HTML",
+                )
+            else:
+                await saving_msg.edit_text(
+                    "❌ Keep'ga saqlab bo'lmadi: " + err
+                )
+
+        # Calendar event
+        try:
+            from services.stt_service import extract_datetime_from_text
+            from services.google_calendar_service import create_event_from_text_info
+            dt_info = extract_datetime_from_text(transcription)
+            if dt_info:
+                cal_result = await create_event_from_text_info(dt_info)
+                if cal_result.get("success"):
+                    link = cal_result.get("link", "#")
+                    await callback.message.answer(
+                        "<b>📅 Google Calendar'ga ham qo'shildi:</b> "
+                        + dt_info.get("date", "") + " " + dt_info.get("time", "")
+                        + "\n" + '<a href="' + link + '">Calendar\'da ko\'rish</a>',
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+        except Exception:
+            pass
+
+    except Exception as e:
+        logger.error("Keep save xatosi: " + str(e))
+        await saving_msg.edit_text("❌ Xatolik yuz berdi: " + str(e))
+    finally:
+        try:
+            if audio_path and os.path.exists(audio_path):
+                os.unlink(audio_path)
+        except Exception:
+            pass
+
+
+@router.callback_query(F.data.startswith("keep_skip_"))
+async def callback_keep_skip(callback: CallbackQuery):
+    """Foydalanuvchi 'Yo'q' ni bosdi."""
+    await callback.answer("OK, saqlanmadi.")
+    chat_id = callback.message.chat.id
+    pending = _pending_transcriptions.pop(chat_id, None)
+
+    # Audio faylni tozalash
+    if pending and pending.get("audio_path"):
+        try:
+            os.unlink(pending["audio_path"])
+        except Exception:
+            pass
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer("✅ Tushunildi. Xabar saqlanmadi.")
