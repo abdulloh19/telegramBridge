@@ -47,17 +47,13 @@ async def setup_bot_commands(bot: Bot):
     await bot.set_my_commands(commands)
 
 
-async def notify_admins_on_startup(bot: Bot):
-    """Bot ishga tushganda yangi versiya bo'lsa haqiqiy yangiliklarni yuborish."""
-    if not ADMIN_IDS:
-        logger.warning("DIQQAT: .env faylida ADMIN_IDS ko'rsatilmagan! Bot faqat adminlar uchun ishlaydi.")
-        return
-
+async def notify_users_on_startup(bot: Bot):
+    """Bot ishga tushganda yangi versiya bo'lsa barcha foydalanuvchilarga yangiliklarni yuborish."""
     try:
-        from services.release_service import notify_admins_of_new_release
-        await notify_admins_of_new_release(bot, ADMIN_IDS)
+        from services.release_service import notify_all_users_of_new_release
+        await notify_all_users_of_new_release(bot)
     except Exception as e:
-        logger.warning(f"Yangilanish bildirishnomasi xatosi: {e}")
+        logger.warning(f"Barcha foydalanuvchilarga yangilanish bildirishnomasi xatosi: {e}")
 
 
 async def main():
@@ -131,7 +127,7 @@ async def main():
 
     # Buyruqlar menyusi va xabarnoma
     await setup_bot_commands(bot)
-    await notify_admins_on_startup(bot)
+    await notify_users_on_startup(bot)
 
     bot_info = await bot.get_me()
     logger.info(f"Bot muvaffaqiyatli ishga tushdi: @{bot_info.username} ({bot_info.first_name})")

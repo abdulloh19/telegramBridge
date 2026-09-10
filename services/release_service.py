@@ -67,28 +67,57 @@ def mark_update_announced():
         logger.warning(f"Versiyani saqlashda xatolik: {e}")
 
 
-async def notify_admins_of_new_release(bot: Bot, admin_ids: list, force: bool = False):
+async def notify_all_users_of_new_release(bot: Bot, force: bool = False):
     """
     Faqat yangi versiya bo'lganda yoki majburiy (force=True) chaqirilganda
-    adminlarga yangi imkoniyatlar ro'yxatini yuboradi.
+    BARCHA bot foydalanuvchilariga yangiliklar xabarini yuboradi.
     """
-    if not admin_ids:
+    if not force and not should_announce_update():
+        logger.info(f"v{CURRENT_VERSION} yangiliklari allaqachon barcha foydalanuvchilarga yuborilgan. Qayta takrorlanmadi.")
         return
 
-    if not force and not should_announce_update():
-        logger.info(f"v{CURRENT_VERSION} yangiliklari allaqachon yuborilgan. Qayta takrorlanmadi.")
+    from services.user_service import UserService
+    from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
+
+    user_ids = UserService.get_all_user_ids()
+    if not user_ids:
+        logger.warning("Foydalanuvchilar topilmadi, yangiliklar yuborilmadi.")
         return
 
     text = get_latest_update_message()
 
     sent_count = 0
-    for admin_id in admin_ids:
+    blocked_count = 0
+    failed_count = 0
+
+    logger.info(f"v{CURRENT_VERSION} yangiliklari {len(user_ids)} ta foydalanuvchiga yuborilmoqda...")
+
+    for uid in user_ids:
         try:
-            await bot.send_message(admin_id, text, parse_mode="HTML")
+            await bot.send_message(uid, text, parse_mode="HTML")
             sent_count += 1
+            await asyncio.sleep(0.05)  # Telegram FloodWait cheklovidan saqlanish
+        except TelegramForbiddenError:
+            blocked_count += 1
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.retry_after + 1)
+            try:
+                await bot.send_message(uid, text, parse_mode="HTML")
+                sent_count += 1
+            except Exception:
+                failed_count += 1
         except Exception as e:
-            logger.warning(f"Admin ({admin_id}) ga yangilanish xabari yetmadi: {e}")
+            failed_count += 1
+            logger.debug(f"User {uid} ga yangilik yuborishda xatolik: {e}")
 
     if sent_count > 0:
         mark_update_announced()
-        logger.info(f"v{CURRENT_VERSION} yangiliklari {sent_count} ta adminga muvaffaqiyatli yuborildi.")
+        logger.info(
+            f"v{CURRENT_VERSION} yangiliklari muvaffaqiyatli yuborildi: "
+            f"Yetkazildi: {sent_count}, Bloklagan: {blocked_count}, Xatolar: {failed_count}"
+        )
+
+
+async def notify_admins_of_new_release(bot: Bot, admin_ids: list = None, force: bool = False):
+    """Barcha foydalanuvchilarga yangilik yuborish (orqaga moslik uchun)."""
+    await notify_all_users_of_new_release(bot, force=force)
