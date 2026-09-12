@@ -34,8 +34,13 @@ BANNER = r"""
 
 async def setup_bot_commands(bot: Bot):
     """Telegram ilovasida menyu buyruqlarini ro'yxatdan o'tkazish."""
+    from aiogram.types import MenuButtonWebApp, WebAppInfo
+    from config import WEBAPP_URL
+
     commands = [
         BotCommand(command="start", description="🚀 Bosh menyuni ochish"),
+        BotCommand(command="app", description="🚀 Super Ilova (25 ta so'z & Audio)"),
+        BotCommand(command="words", description="📚 So'zlar hisoblagichi & Lug'at"),
         BotCommand(command="reminders", description="⏰ Faol vaqtli eslatmalarni ko'rish"),
         BotCommand(command="notes", description="📋 Saqlangan matnli qaydlarni ko'rish"),
         BotCommand(command="dl", description="📥 Video & MP3 yuklash (Telegram, YouTube, Insta, TikTok)"),
@@ -45,6 +50,12 @@ async def setup_bot_commands(bot: Bot):
     ]
 
     await bot.set_my_commands(commands)
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="Super ilova", web_app=WebAppInfo(url=WEBAPP_URL))
+        )
+    except Exception as e:
+        logger.warning(f"Menyu tugmasini sozlash xatosi: {e}")
 
 
 async def notify_users_on_startup(bot: Bot):

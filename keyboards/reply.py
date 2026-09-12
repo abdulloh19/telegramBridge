@@ -1,9 +1,13 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
+from config import WEBAPP_URL
 
 
 def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
     """Doimiy pastki tezkor menyu tugmalari."""
     keyboard = [
+        [
+            KeyboardButton(text="🚀 Super Ilova (25 ta so'z)", web_app=WebAppInfo(url=WEBAPP_URL)),
+        ],
         [
             KeyboardButton(text="📥 Video Yuklash"),
             KeyboardButton(text="🎵 MP3 Yuklash"),
