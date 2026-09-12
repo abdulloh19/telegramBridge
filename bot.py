@@ -14,7 +14,7 @@ from aiogram.types import BotCommand
 
 from config import BOT_TOKEN, ADMIN_IDS
 from middlewares.auth import AuthMiddleware
-from handlers import start, cleaner, media_downloader, voice_handler, text_keep_handler
+from handlers import start, cleaner, media_downloader, voice_handler, text_keep_handler, vocabulary
 from utils.logger import logger
 from utils.helpers import escape_html
 
@@ -38,6 +38,7 @@ async def setup_bot_commands(bot: Bot):
         BotCommand(command="start", description="🚀 Bosh menyuni ochish"),
         BotCommand(command="reminders", description="⏰ Faol vaqtli eslatmalarni ko'rish"),
         BotCommand(command="notes", description="📋 Saqlangan matnli qaydlarni ko'rish"),
+        BotCommand(command="mywords", description="📚 Yodlangan so'zlar sonini ko'rish"),
         BotCommand(command="dl", description="📥 Video & MP3 yuklash (Telegram, YouTube, Insta, TikTok)"),
         BotCommand(command="mp3", description="🎵 Faqat MP3 Audio yuklash (320kbps)"),
         BotCommand(command="cleaner", description="🧹 Telegram hisobni tozalash"),
@@ -124,6 +125,7 @@ async def main():
     dp.include_router(media_downloader.router)
     dp.include_router(voice_handler.router)       # 🎤 STT + Keep + Calendar tasdiqi
     dp.include_router(text_keep_handler.router)   # 📝 Matn xabar → Keep tasdiqi
+    dp.include_router(vocabulary.router)          # 📚 Til bo'yicha yodlangan so'zlar
 
     # Buyruqlar menyusi va xabarnoma
     await setup_bot_commands(bot)

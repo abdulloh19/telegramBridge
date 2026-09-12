@@ -68,6 +68,9 @@ def start_main_inline_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🧹 Telegram Hisobni Tozalash", callback_data="open_cleaner"),
         ],
         [
+            InlineKeyboardButton(text="📚 Yodlangan so'zlarim", callback_data="open_mywords"),
+        ],
+        [
             InlineKeyboardButton(text="📖 Qo'llanma", callback_data="open_help"),
         ]
     ]

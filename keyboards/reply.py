@@ -13,6 +13,9 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
             KeyboardButton(text="📋 Eslatmalarim"),
         ],
         [
+            KeyboardButton(text="📚 Yodlangan so'zlarim"),
+        ],
+        [
             KeyboardButton(text="ℹ️ Qo'llanma / Yordam"),
         ]
     ]
