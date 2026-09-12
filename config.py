@@ -16,7 +16,7 @@ if not os.getenv("BOT_TOKEN") and ENV_EXAMPLE_PATH.exists():
 
 # Asosiy sozlamalar
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://yrs-jvc-minutes-substance.trycloudflare.com").strip()
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://byte-persons-pressing-stands.trycloudflare.com").strip()
 
 # Telegram Userbot / Account Cleaner sozlamalari
 TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID", "").strip()

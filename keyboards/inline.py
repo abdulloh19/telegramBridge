@@ -67,6 +67,9 @@ def start_main_inline_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🚀 Super Ilovani Ochish (25 ta so'z)", web_app=WebAppInfo(url=WEBAPP_URL)),
         ],
         [
+            InlineKeyboardButton(text="🗣️ Jonli Dialoglar (Taksi, Mehmonxona...)", callback_data="dlg_menu"),
+        ],
+        [
             InlineKeyboardButton(text="📥 Video Yuklash", callback_data="open_dl"),
             InlineKeyboardButton(text="🎵 MP3 Yuklash", callback_data="open_mp3"),
         ],

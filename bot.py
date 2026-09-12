@@ -14,7 +14,7 @@ from aiogram.types import BotCommand
 
 from config import BOT_TOKEN, ADMIN_IDS
 from middlewares.auth import AuthMiddleware
-from handlers import start, cleaner, media_downloader, voice_handler, text_keep_handler
+from handlers import start, cleaner, media_downloader, voice_handler, text_keep_handler, dialogue_handler
 from utils.logger import logger
 from utils.helpers import escape_html
 
@@ -40,6 +40,7 @@ async def setup_bot_commands(bot: Bot):
     commands = [
         BotCommand(command="start", description="🚀 Bosh menyuni ochish"),
         BotCommand(command="app", description="🚀 Super Ilova (25 ta so'z & Audio)"),
+        BotCommand(command="dialogue", description="🗣️ Jonli Dialoglar (Taksi, Mehmonxona...)"),
         BotCommand(command="words", description="📚 So'zlar hisoblagichi & Lug'at"),
         BotCommand(command="reminders", description="⏰ Faol vaqtli eslatmalarni ko'rish"),
         BotCommand(command="notes", description="📋 Saqlangan matnli qaydlarni ko'rish"),
@@ -129,8 +130,9 @@ async def main():
     dp.message.middleware(auth_middleware)
     dp.callback_query.middleware(auth_middleware)
 
-    # Router'lar: start, cleaner, media_downloader, voice_handler, text_keep_handler
+    # Router'lar: start, cleaner, media_downloader, voice_handler, text_keep_handler, dialogue_handler
     dp.include_router(start.router)
+    dp.include_router(dialogue_handler.router)
     dp.include_router(cleaner.router)
     dp.include_router(media_downloader.router)
     dp.include_router(voice_handler.router)       # 🎤 STT + Keep + Calendar tasdiqi
@@ -150,7 +152,8 @@ async def main():
     scheduler_task = asyncio.create_task(start_reminder_scheduler(bot))
 
     try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types(), drop_pending_updates=True)
     finally:
         scheduler_task.cancel()
         try:

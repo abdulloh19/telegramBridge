@@ -9,12 +9,12 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
             KeyboardButton(text="🚀 Super Ilova (25 ta so'z)", web_app=WebAppInfo(url=WEBAPP_URL)),
         ],
         [
+            KeyboardButton(text="🗣️ Jonli Dialoglar"),
             KeyboardButton(text="📥 Video Yuklash"),
-            KeyboardButton(text="🎵 MP3 Yuklash"),
         ],
         [
+            KeyboardButton(text="🎵 MP3 Yuklash"),
             KeyboardButton(text="🧹 Hisobni Tozalash"),
-            KeyboardButton(text="📋 Eslatmalarim"),
         ],
         [
             KeyboardButton(text="ℹ️ Qo'llanma / Yordam"),
