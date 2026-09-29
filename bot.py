@@ -39,6 +39,7 @@ async def setup_bot_commands(bot: Bot):
 
     commands = [
         BotCommand(command="start", description="🚀 Bosh menyuni ochish"),
+        BotCommand(command="stats", description="👥 Foydalanuvchilar va oxirgi 24 soat faolligi"),
         BotCommand(command="app", description="🚀 Super Ilova (25 ta so'z & Audio)"),
         BotCommand(command="dialogue", description="🗣️ Jonli Dialoglar (Taksi, Mehmonxona...)"),
         BotCommand(command="words", description="📚 So'zlar hisoblagichi & Lug'at"),

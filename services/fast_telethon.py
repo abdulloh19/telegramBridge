@@ -128,7 +128,7 @@ class FastTelethon:
 
         try:
             part_count = math.ceil(file_size / CHUNK_SIZE)
-            workers_count = min(workers, part_count, 12)
+            workers_count = max(1, min(workers, part_count, 12))
 
             queue = asyncio.Queue()
             for i in range(part_count):
@@ -170,6 +170,8 @@ class FastTelethon:
                             try:
                                 res = await client(req)
                                 data = res.bytes
+                                if len(data) != min(CHUNK_SIZE, file_size - offset):
+                                    raise RuntimeError("Incomplete Telegram file chunk")
                                 fp.seek(offset)
                                 fp.write(data)
 
@@ -204,12 +206,15 @@ class FastTelethon:
                         queue.task_done()
 
             tasks = [asyncio.create_task(_worker()) for _ in range(workers_count)]
-            await queue.join()
-            for t in tasks:
-                t.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                await asyncio.gather(*tasks)
+            finally:
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
 
-            if failed_attempts >= 6 or not out_path.exists() or out_path.stat().st_size < file_size * 0.95:
+            if failed_attempts >= 6 or downloaded_bytes != file_size or not out_path.exists() or out_path.stat().st_size != file_size:
                 raise RuntimeError("FastTelethon parallel download to'liq yakunlanmadi, standart yuklashga o'tilmoqda.")
 
             return out_path

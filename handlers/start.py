@@ -13,16 +13,29 @@ from utils.logger import logger
 router = Router()
 
 
+@router.message(Command("stats"), StateFilter("*"))
+async def cmd_stats(message: Message):
+    from config import is_super_admin
+    if not is_super_admin(message.from_user.id):
+        return
+    await message.answer(
+        f"👥 Bazadagi noyob foydalanuvchilar: {UserService.get_users_count()}\n"
+        f"🕒 Oxirgi 24 soatda botga murojaat qilganlar: {UserService.get_recent_users_count()}\n"
+        "Faollik hisobi ushbu yangilanishdan boshlab yuritiladi."
+    )
+
+
 @router.message(CommandStart(), StateFilter("*"))
-async def cmd_start(message: Message, state: FSMContext):
+async def cmd_start(message: Message, state: FSMContext, actor=None):
     """Bot boshlang'ich salomlashuv xabari."""
     await state.clear()
-    user_id = message.from_user.id
+    actor = actor or message.from_user
+    user_id = actor.id
 
     UserService.register_user(
         user_id=user_id,
-        username=message.from_user.username,
-        full_name=message.from_user.full_name
+        username=actor.username,
+        full_name=actor.full_name
     )
 
     profile_line = "👤 <b>Telegram hisob:</b> ⚪ <i>Ulanmagan (/cleaner)</i>\n"
@@ -84,9 +97,9 @@ async def cmd_super_app(message: Message, state: FSMContext):
 
     text = (
         "🚀 <b>Mnemonic Super Ilova & So'zlar Tizimi</b>\n\n"
-        "✨ <b>Joriy So'zlar Tahlili (Dinamik):</b>\n"
-        "• 🇷🇺 <b>Rus tili:</b> 19 ta o'zlashtirilgan / 25 ta dars so'zi\n"
-        "• 🇬🇧 <b>Ingliz tili:</b> 10 ta o'zlashtirilgan / 25 ta dars so'zi\n"
+        "✨ <b>Til darslari va shaxsiy natijalar:</b>\n"
+        "• 🇷🇺 Rus tili va 🇬🇧 Ingliz tili\n"
+        "• O'zlashtirilgan so'zlaringizni ilovadagi lug'at bo'limida ko'ring.\n"
         "• 🎮 <b>O'yinlar:</b> 3D Flashcards, Juftlikni top, So'z yig'ish, Grammatika saralash\n"
         "• 🗣️ <b>Jonli Dialoglar:</b> Taksi, Kafe, Supermarket audio replikalari bilan\n\n"
         "👇 <i>Quyidagi tugma orqali bevosita Telegram ichida oching:</i>"

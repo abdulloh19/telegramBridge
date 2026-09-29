@@ -32,6 +32,14 @@ from utils.helpers import escape_html, format_bytes, format_speed, format_eta
 from utils.logger import logger
 
 router = Router()
+AUTO_AUDIO_DOWNLOAD = os.getenv("AUTO_AUDIO_DOWNLOAD", "false").lower() in {"1", "true", "yes"}
+
+
+async def _edit_progress(status_msg: Message, text: str):
+    try:
+        await status_msg.edit_text(text, parse_mode="HTML")
+    except Exception as error:
+        logger.debug(f"Progress xabari yangilanmadi: {error}")
 
 # Media xotirasi (token -> dict)
 _MEDIA_CACHE: dict[str, dict] = {}
@@ -81,7 +89,7 @@ async def cmd_download_media(message: Message, state: FSMContext, bot: Bot):
         "• 🎵 <b>TikTok:</b> Suv belgisiz (No Watermark) videolar\n"
         "• 📌 <b>Pinterest:</b> Barcha video va animatsiyalar\n"
         "• 🌐 <b>Boshqa:</b> Facebook, Twitter/X va to'g'ridan-to'g'ri MP4 linklar\n\n"
-        "<i>⚡ Video bilan birga avtomatik 320kbps MP3 audio ham yuboriladi! (Bekor qilish: /cancel)</i>",
+        "<i>⚡ Audio kerak bo'lsa video ostidagi MP3 tugmasini bosing. (Bekor qilish: /cancel)</i>",
         parse_mode="HTML",
         disable_web_page_preview=True
     )
@@ -117,6 +125,9 @@ async def cmd_download_mp3(message: Message, state: FSMContext, bot: Bot):
 
 @router.message(DownloaderStates.waiting_for_media_link)
 async def handle_media_link_input(message: Message, state: FSMContext, bot: Bot):
+    if not message.text:
+        await message.answer("Iltimos, video havolasini matn shaklida yuboring.")
+        return
     if message.text.strip().startswith("/cancel"):
         await state.clear()
         await message.answer("❌ Video yuklash bekor qilindi.")
@@ -133,6 +144,9 @@ async def handle_media_link_input(message: Message, state: FSMContext, bot: Bot)
 
 @router.message(DownloaderStates.waiting_for_mp3_link)
 async def handle_mp3_link_input(message: Message, state: FSMContext, bot: Bot):
+    if not message.text:
+        await message.answer("Iltimos, audio havolasini matn shaklida yuboring.")
+        return
     if message.text.strip().startswith("/cancel"):
         await state.clear()
         await message.answer("❌ MP3 yuklash bekor qilindi.")
@@ -164,7 +178,7 @@ async def handle_user_uploaded_media(message: Message, bot: Bot):
     media_obj = message.video or message.video_note or message.audio or message.document
     file_id = media_obj.file_id
     file_name = getattr(media_obj, 'file_name', None) or f"video_{message.message_id}.mp4"
-    file_size_mb = getattr(media_obj, 'file_size', 0) / (1024 * 1024)
+    file_size_mb = (getattr(media_obj, 'file_size', 0) or 0) / (1024 * 1024)
 
     # Agar fayl 45MB dan kichik bo'lsa darhol MP3 qilish
     if file_size_mb <= 45:
@@ -265,7 +279,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
                     f"📊 <b>Hajm:</b> {cur_str} / {tot_str}\n"
                     f"🚀 <b>Tezlik:</b> {speed_str} | ⏱ <b>Qolgan:</b> {eta_str}"
                 )
-                asyncio.create_task(status_msg.edit_text(text, parse_mode="HTML"))
+                asyncio.create_task(_edit_progress(status_msg, text))
 
         try:
             res_data = await MediaDownloaderService.download_external_media(
@@ -370,7 +384,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
                                 f"📊 <b>Hajm:</b> {format_bytes(curr)} / {format_bytes(tot)}\n"
                                 f"🚀 <b>Tezlik:</b> {format_speed(spd)} | ⏱ <b>Qolgan:</b> {format_eta(eta)}"
                             )
-                            asyncio.create_task(status_msg.edit_text(text, parse_mode="HTML"))
+                            asyncio.create_task(_edit_progress(status_msg, text))
 
                     sent = await BotClientService.send_file_to_user(
                         user_id=user_id,
@@ -391,6 +405,9 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
                             await message.answer_document(doc_comp, caption=part_caption, parse_mode="HTML")
 
             # 2. Qo'shimcha 320kbps MP3 Musiqasini DARHOL bot chatga yuborish
+            if not AUTO_AUDIO_DOWNLOAD:
+                await status_msg.delete()
+                return
             try:
                 mp3_path = await MediaDownloaderService.extract_high_quality_mp3(
                     file_path,
@@ -462,7 +479,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
                 f"📊 <b>Hajm:</b> {cur_str} / {tot_str}\n"
                 f"🚀 <b>Tezlik:</b> {speed_str} | ⏱ <b>Qolgan:</b> {eta_str}"
             )
-            asyncio.create_task(status_msg.edit_text(text, parse_mode="HTML"))
+            asyncio.create_task(_edit_progress(status_msg, text))
 
     try:
         results = await MediaDownloaderService.download_videos_from_link(
@@ -557,7 +574,7 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
                             f"📊 <b>Hajm:</b> {format_bytes(curr)} / {format_bytes(tot)}\n"
                             f"🚀 <b>Tezlik:</b> {format_speed(spd)} | ⏱ <b>Qolgan:</b> {format_eta(eta)}"
                         )
-                        asyncio.create_task(status_msg.edit_text(text, parse_mode="HTML"))
+                        asyncio.create_task(_edit_progress(status_msg, text))
 
                 sent = await BotClientService.send_file_to_user(
                     user_id=user_id,
@@ -572,6 +589,8 @@ async def _process_media_download(message: Message, link: str, bot: Bot, force_m
                     await message.answer_document(doc_file, caption=caption, parse_mode="HTML")
 
             # 2. Videodan keyin avtomatik 320kbps MP3 audioni ham bot chatga yuborish
+            if not AUTO_AUDIO_DOWNLOAD:
+                continue
             try:
                 mp3_path = await MediaDownloaderService.extract_high_quality_mp3(file_path, title=item["filename"])
                 if mp3_path and mp3_path.exists():

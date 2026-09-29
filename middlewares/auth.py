@@ -48,5 +48,7 @@ class AuthMiddleware(BaseMiddleware):
 
             return None
 
+        from services.user_service import UserService
+        UserService.register_user(user.id, user.username, user.full_name)
         # Foydalanuvchi admin bo'lsa, davom ettirish
         return await handler(event, data)

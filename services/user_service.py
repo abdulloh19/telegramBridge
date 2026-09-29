@@ -1,4 +1,7 @@
 import json
+import os
+import tempfile
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 from utils.logger import logger
@@ -23,8 +26,10 @@ class UserService:
     def _save_users(data: dict):
         try:
             USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(USERS_FILE, "w", encoding="utf-8") as f:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=USERS_FILE.parent, delete=False) as f:
+                temp_path = f.name
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(temp_path, USERS_FILE)
         except Exception as e:
             logger.error(f"Foydalanuvchilarni saqlashda xatolik: {e}")
 
@@ -49,6 +54,7 @@ class UserService:
                     "username": username or "",
                     "full_name": full_name or ""
                 }
+            users[uid_str]["last_seen"] = datetime.now(timezone.utc).isoformat()
             cls._save_users(users)
         except Exception as e:
             logger.warning(f"Foydalanuvchini ro'yxatga olishda xatolik: {e}")
@@ -57,7 +63,7 @@ class UserService:
     def get_all_user_ids(cls) -> list[int]:
         """Barcha ro'yxatdan o'tgan foydalanuvchilar va adminlar ID larini unikal to'plam qilib qaytaradi."""
         from config import ADMIN_IDS, BASE_DIR
-        ids = set(ADMIN_IDS)
+        ids = set()
 
         # 1. sessions/registered_users.json
         users = cls._load_users()
@@ -93,14 +99,21 @@ class UserService:
                 except Exception:
                     pass
 
-        # 4. Asosiy ma'lum bot foydalanuvchilari zaxirasi
-        ids.add(5787141744)
-        ids.add(6767933010)
-        ids.add(5049524803)
-
         return sorted(list(ids))
 
     @classmethod
     def get_users_count(cls) -> int:
         """Jami unikal foydalanuvchilar soni."""
         return len(cls.get_all_user_ids())
+
+    @classmethod
+    def get_recent_users_count(cls, hours: int = 24) -> int:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        count = 0
+        for user in cls._load_users().values():
+            try:
+                if datetime.fromisoformat(user.get("last_seen", "")) >= cutoff:
+                    count += 1
+            except (ValueError, TypeError):
+                continue
+        return count

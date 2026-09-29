@@ -96,7 +96,7 @@ async def cb_dlg_toggle_lang(callback: CallbackQuery):
 async def cb_dlg_back_main(callback: CallbackQuery, state: FSMContext):
     """Asosiy start menyusiga qaytish."""
     from handlers.start import cmd_start
-    await cmd_start(callback.message, state)
+    await cmd_start(callback.message, state, actor=callback.from_user)
     await callback.answer()
 
 
@@ -296,7 +296,8 @@ async def cb_lang_switch(callback: CallbackQuery):
     dialogues = get_dialogues_for_topic(topic, new_lang)
     active_dlg = get_active_dialogue(topic, scenario_idx, new_lang)
     total_steps = len(active_dlg.get("lines", []))
-    safe_step = min(step, total_steps - 1)
+    safe_step = max(0, min(step, total_steps - 1))
+    session["step"] = safe_step
 
     text = format_dialogue_telegram_message(
         dialogue=active_dlg,

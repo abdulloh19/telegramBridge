@@ -6,6 +6,7 @@ Strictly maintains topic continuity until intentionally changed by the user.
 """
 
 from typing import List, Dict, Any, Optional
+from html import escape
 
 # Canonical topic normalizer
 TOPIC_ALIASES = {
@@ -317,27 +318,22 @@ def generate_topic_dialogue(topic: str, scenario_idx: int, lang: str = "en") -> 
 
     scenario_num = scenario_idx + 1
 
-    if is_ru:
-        title = f"{meta['icon']} {meta['name']} — Ситуация №{scenario_num}"
-        situation_uz = f"{meta['name']} mavzusidagi {scenario_num}-hayotiy real vaziyat va muloqot."
-        target_words = ["Диалог", "Практика", "Выражения", "Уверенность", "Успех"]
-        lines = [
-            {"speaker": "Собеседник 1", "speakerIcon": meta["icon"], "textTarget": f"Здравствуйте! Давайте обсудим детали по теме «{meta['name']}».", "textUz": f"Assalomu alaykum! Keling, «{meta['name']}» mavzusi bo'yicha suhbatlashamiz."},
-            {"speaker": "Собеседник 2", "speakerIcon": "🗣️", "textTarget": f"С удовольствием! В этой ситуации очень важно правильно подобрать нужные слова.", "textUz": "Jon deb! Bu vaziyatda to'g'ri so'zlarni tanlash juda muhim."},
-            {"speaker": "Собеседник 1", "speakerIcon": meta["icon"], "textTarget": "Согласен. Чёткое произношение и практический диалог дают отличный результат.", "textUz": "Qo'shilaman. Aniq talaffuz va amaliy dialog ajoyib natija beradi."},
-            {"speaker": "Собеседник 2", "speakerIcon": "🗣️", "textTarget": "Большое спасибо за полезную практику! Переходим к следующему шагу.", "textUz": "Foydali amaliyot uchun katta rahmat! Keyingi qadamga o'tamiz."},
-        ]
-    else:
-        title = f"{meta['icon']} {meta['name']} — Scenario #{scenario_num}"
-        situation_uz = f"{meta['name']} mavzusidagi {scenario_num}-hayotiy real vaziyat va muloqot."
-        target_words = ["Context", "Fluency", "Phrases", "Confidence", "Progress"]
-        lines = [
-            {"speaker": "Speaker A", "speakerIcon": meta["icon"], "textTarget": f"Hello! Let us practice essential conversations regarding {meta['name']}.", "textUz": f"Salom! Keling, {meta['name']} mavzusi bo'yicha muhim jumlalarni mashq qilamiz."},
-            {"speaker": "Speaker B", "speakerIcon": "🗣️", "textTarget": f"Gladly! Learning realistic vocabulary for this situation is incredibly helpful.", "textUz": "Jon deb! Bu vaziyat uchun hayotiy so'zlarni o'rganish juda foydali."},
-            {"speaker": "Speaker A", "speakerIcon": meta["icon"], "textTarget": "Exactly. Speaking out loud improves both your memory and pronunciation.", "textUz": "Xuddi shunday. Ovoz chiqarib gapirish xotira va talaffuzni kuchaytiradi."},
-            {"speaker": "Speaker B", "speakerIcon": "🗣️", "textTarget": "Thank you for the thorough lesson! Ready for the next practical step.", "textUz": "To'liq dars uchun rahmat! Keyingi amaliy qadamga tayyorman."},
-        ]
-
+    from services.dialogue_templates import TOPIC_PRACTICE
+    prompts = TOPIC_PRACTICE[canon]
+    prompt = prompts[scenario_idx % len(prompts)]
+    text = prompt[1] if is_ru else prompt[0]
+    title = f"{meta['icon']} {meta['name']} — {scenario_num}"
+    situation_uz = prompt[2]
+    target_words = [text]
+    lines = [
+        {"speaker": "A", "speakerIcon": meta["icon"], "textTarget": text, "textUz": prompt[2]},
+        {"speaker": "B", "speakerIcon": "🗣️",
+         "textTarget": "Я проверю. Подождите минуту, пожалуйста." if is_ru else "Let me check. Please wait a moment.",
+         "textUz": "Tekshirib ko'ray. Iltimos, bir oz kuting."},
+        {"speaker": "A", "speakerIcon": meta["icon"],
+         "textTarget": "Спасибо за помощь!" if is_ru else "Thank you for your help!",
+         "textUz": "Yordamingiz uchun rahmat!"},
+    ]
     return {
         "id": f"{lang}_{canon}_gen_{scenario_idx}",
         "title": title,
@@ -377,6 +373,16 @@ def format_dialogue_telegram_message(
     lang: str = "en"
 ) -> str:
     """Telegram xabari ko'rinishida dialogni chiroyli formatlaydi."""
+    dialogue = dict(dialogue)
+    for field in ("title", "situationUz"):
+        dialogue[field] = escape(str(dialogue.get(field, "")))
+    dialogue["targetWords"] = [escape(str(word)) for word in dialogue.get("targetWords", [])]
+    dialogue["lines"] = [
+        {key: escape(str(value)) for key, value in line.items()}
+        for line in dialogue.get("lines", [])
+    ]
+    if not dialogue["lines"]:
+        raise ValueError("Dialogda replikalar mavjud emas")
     canon = normalize_topic(topic)
     meta = TOPIC_METADATA.get(canon, TOPIC_METADATA["taxi"])
     lines = dialogue.get("lines", [])

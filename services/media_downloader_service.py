@@ -3,6 +3,7 @@ import re
 import asyncio
 import time
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any, Tuple
 from config import BASE_DIR
@@ -160,119 +161,48 @@ class MediaDownloaderService:
         title: Optional[str] = None,
         artist: Optional[str] = "Telegram Dev Bridge"
     ) -> Path:
-        """
-        Har qanday videodan 320kbps yuqori sifatli audio (MP3/M4A) ni 0.1-2 soniyada ajratib oladi.
-        Direct stream copy va VBR/CBR MP3 texnologiyalari bilan ta'minlangan.
-        """
+        """Extract a genuine 320 kbps MP3; isolate outputs and reuse completed conversions."""
         video_path = Path(video_path)
-        if not video_path.exists():
+        if not video_path.is_file():
             raise FileNotFoundError(f"Video fayl topilmadi: {video_path}")
-
-        clean_stem = "".join(c for c in video_path.stem if c.isalnum() or c in (' ', '_', '-')).strip() or 'audio'
-        if not output_audio_path:
-            output_audio_path = AUDIO_DIR / f"{clean_stem}.mp3"
-        else:
-            output_audio_path = Path(output_audio_path)
-
-        output_audio_path.parent.mkdir(parents=True, exist_ok=True)
-        ffmpeg_exe = cls.get_ffmpeg_path()
-
-        logger.info(f"Audio ajratish boshlandi: {video_path.name}")
-
-        # 1-USUL: ULTRA-TEZKOR DIRECT STREAM COPY (0.1 soniyada - 100% original sifat)
-        # MP4 ichidagi AAC streamni to'g'ridan-to'g'ri .m4a qilib olish CPU sarflamaydi
-        m4a_path = output_audio_path.with_suffix(".m4a")
-        cmd_copy = [
-            ffmpeg_exe,
-            "-nostdin",
-            "-y",
-            "-loglevel", "error",
-            "-i", str(video_path),
-            "-vn", "-sn", "-dn",
-            "-c:a", "copy",
-            "-map", "0:a:0?",
+        import hashlib
+        stat = video_path.stat()
+        identity = f"{video_path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}:{title}:{artist}"
+        key = hashlib.sha256(identity.encode()).hexdigest()[:20]
+        output = Path(output_audio_path) if output_audio_path else AUDIO_DIR / f"{key}.mp3"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if output.is_file() and output.stat().st_size > 1000:
+            return output
+        # Publish only a finished conversion; failed/cancelled jobs cannot poison the cache.
+        fd, name = tempfile.mkstemp(suffix=".mp3", dir=output.parent)
+        os.close(fd)
+        temporary = Path(name)
+        command = [
+            cls.get_ffmpeg_path(), "-nostdin", "-y", "-loglevel", "error",
+            "-i", str(video_path), "-map", "0:a:0", "-vn", "-sn", "-dn",
+            "-c:a", "libmp3lame", "-b:a", "320k",
         ]
         if title:
-            cmd_copy.extend(["-metadata", f"title={title}"])
+            command += ["-metadata", f"title={title}"]
         if artist:
-            cmd_copy.extend(["-metadata", f"artist={artist}"])
-        cmd_copy.append(str(m4a_path))
-
+            command += ["-metadata", f"artist={artist}"]
+        command.append(str(temporary))
+        proc = None
         try:
-            proc_copy = await asyncio.create_subprocess_exec(
-                *cmd_copy,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE
+            proc = await asyncio.create_subprocess_exec(
+                *command, stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
             )
-            _, _ = await asyncio.wait_for(proc_copy.communicate(), timeout=30)
-            if proc_copy.returncode == 0 and m4a_path.exists() and m4a_path.stat().st_size > 1000:
-                logger.info(f"Direct stream audio ajratildi (0.1s): {m4a_path.name} ({format_bytes(m4a_path.stat().st_size)})")
-                return m4a_path
-        except Exception as copy_err:
-            logger.debug(f"Stream copy urinishi o'tmadi: {copy_err}")
-
-        # 2-USUL: FAST MULTI-THREAD VBR MP3 (2-5 soniyada 320kbps ekvivalent)
-        cmd_vbr = [
-            ffmpeg_exe,
-            "-nostdin",
-            "-y",
-            "-loglevel", "error",
-            "-threads", "0",
-            "-i", str(video_path),
-            "-vn", "-sn", "-dn",
-            "-c:a", "libmp3lame",
-            "-q:a", "2",
-            "-map", "0:a:0?",
-        ]
-        if title:
-            cmd_vbr.extend(["-metadata", f"title={title}"])
-        if artist:
-            cmd_vbr.extend(["-metadata", f"artist={artist}"])
-        cmd_vbr.append(str(output_audio_path))
-
-        try:
-            proc_vbr = await asyncio.create_subprocess_exec(
-                *cmd_vbr,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE
-            )
-            _, _ = await asyncio.wait_for(proc_vbr.communicate(), timeout=600)
-            if proc_vbr.returncode == 0 and output_audio_path.exists() and output_audio_path.stat().st_size > 1000:
-                logger.info(f"VBR MP3 tayyorlandi: {output_audio_path.name} ({format_bytes(output_audio_path.stat().st_size)})")
-                return output_audio_path
-        except Exception as vbr_err:
-            logger.debug(f"VBR MP3 urinishi: {vbr_err}")
-
-        # 3-USUL: STANDART MP3 CODEC FALLBACK
-        cmd_fallback = [
-            ffmpeg_exe,
-            "-nostdin",
-            "-y",
-            "-loglevel", "error",
-            "-threads", "0",
-            "-i", str(video_path),
-            "-vn", "-sn", "-dn",
-            "-b:a", "192k",
-            "-map", "0:a:0?",
-            str(output_audio_path)
-        ]
-        try:
-            proc_fb = await asyncio.create_subprocess_exec(
-                *cmd_fallback,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE
-            )
-            _, stderr_fb = await asyncio.wait_for(proc_fb.communicate(), timeout=600)
-            if proc_fb.returncode == 0 and output_audio_path.exists() and output_audio_path.stat().st_size > 0:
-                logger.info(f"MP3 tayyorlandi (Fallback): {output_audio_path.name}")
-                return output_audio_path
-        except Exception as fb_err:
-            logger.warning(f"Fallback MP3 konvertatsiyada xatolik: {fb_err}")
-
-        raise RuntimeError("Videodan audio ajratib bo'lmadi. Videoda audio yo'q yoki format qo'llab-quvvatlanmaydi.")
+            _, error = await asyncio.wait_for(proc.communicate(), timeout=600)
+            if proc.returncode or temporary.stat().st_size <= 1000:
+                raise RuntimeError("Videodan MP3 ajratilmadi: " + error.decode(errors="replace")[-500:])
+            os.replace(temporary, output)
+            return output
+        finally:
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.communicate()
+            temporary.unlink(missing_ok=True)
 
     @classmethod
     async def compress_video_to_size(
@@ -403,8 +333,11 @@ class MediaDownloaderService:
         if yt_dlp is None:
             raise RuntimeError("yt-dlp moduli o'rnatilmagan. Iltimos: pip install yt-dlp")
 
-        target_dir = save_dir or (AUDIO_DIR if audio_only else VIDEOS_DIR)
-        target_dir.mkdir(parents=True, exist_ok=True)
+        output_root = save_dir or (AUDIO_DIR if audio_only else VIDEOS_DIR)
+        output_root.mkdir(parents=True, exist_ok=True)
+        # Each request owns its outputs, including concurrent requests for one URL.
+        target_dir = Path(tempfile.mkdtemp(prefix="download_", dir=output_root))
+        loop = asyncio.get_running_loop()
 
         ffmpeg_location = cls.get_ffmpeg_path()
         last_progress_time = 0
@@ -420,10 +353,10 @@ class MediaDownloaderService:
                 percent = (downloaded / total) * 100 if total else 0
                 filename = Path(d.get('filename', 'media')).name
 
-                if progress_callback and (now - last_progress_time >= 1.0 or downloaded >= total):
+                if progress_callback and (now - last_progress_time >= 1.0 or (total and downloaded >= total)):
                     last_progress_time = now
                     try:
-                        progress_callback(downloaded, total, filename, percent, speed, eta)
+                        loop.call_soon_threadsafe(progress_callback, downloaded, total, filename, percent, speed, eta)
                     except Exception:
                         pass
 
@@ -436,11 +369,10 @@ class MediaDownloaderService:
             'no_warnings': True,
             'ffmpeg_location': ffmpeg_location,
             'noplaylist': True,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'ios']
-                }
-            },
+            'concurrent_fragment_downloads': 8,
+            'socket_timeout': 30,
+            'retries': 3,
+            'fragment_retries': 3,
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
             }
@@ -467,9 +399,24 @@ class MediaDownloaderService:
             })
 
         def _run_ydl():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                return info
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    return ydl.extract_info(url, download=True)
+            except yt_dlp.utils.DownloadError as error:
+                if 'cloudflare' not in str(error).lower():
+                    raise
+                # Retry this specific challenge once with yt-dlp's browser transport.
+                retry_opts = dict(ydl_opts)
+                retry_opts.pop('http_headers', None)
+                retry_opts['extractor_args'] = {'generic': {'impersonate': ['chrome']}}
+                try:
+                    from yt_dlp.networking.impersonate import ImpersonateTarget
+                    retry_opts['impersonate'] = ImpersonateTarget.from_str('chrome')
+                except Exception:
+                    pass
+                logger.info('Cloudflare: brauzer transporti bilan bir marta qayta urinilmoqda')
+                with yt_dlp.YoutubeDL(retry_opts) as ydl:
+                    return ydl.extract_info(url, download=True)
 
         loop = asyncio.get_running_loop()
         info_dict = await loop.run_in_executor(None, _run_ydl)
@@ -482,9 +429,12 @@ class MediaDownloaderService:
         expected_ext = "mp3" if audio_only else "mp4"
         found_file = None
 
-        if 'requested_downloads' in info_dict and info_dict['requested_downloads']:
+        if info_dict.get('filepath') and Path(info_dict['filepath']).is_file():
+            found_file = Path(info_dict['filepath'])
+
+        if not found_file and 'requested_downloads' in info_dict and info_dict['requested_downloads']:
             req = info_dict['requested_downloads'][0]
-            if 'filepath' in req and Path(req['filepath']).exists():
+            if 'filepath' in req and Path(req['filepath']).suffix == f'.{expected_ext}' and Path(req['filepath']).exists():
                 found_file = Path(req['filepath'])
 
         if not found_file:
@@ -542,8 +492,9 @@ class MediaDownloaderService:
             )
 
         client = await AccountCleanerService.get_client(user_id)
-        target_dir = save_dir or DOWNLOADS_DIR
-        target_dir.mkdir(parents=True, exist_ok=True)
+        output_root = save_dir or DOWNLOADS_DIR
+        output_root.mkdir(parents=True, exist_ok=True)
+        target_dir = Path(tempfile.mkdtemp(prefix="telegram_", dir=output_root))
 
         downloaded_files = []
 
@@ -568,7 +519,8 @@ class MediaDownloaderService:
                 elif hasattr(msg, "video") and msg.video:
                     filename = f"video_{ch_peer}_{msg_id}.mp4"
 
-                out_path = target_dir / filename
+                filename = Path(filename.replace('\\', '/')).name
+                out_path = target_dir / f"{msg_id}_{filename}"
 
                 def _telethon_progress(current, total, speed, eta):
                     percent = (current / total) * 100 if total else 0
