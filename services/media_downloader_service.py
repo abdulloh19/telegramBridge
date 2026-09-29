@@ -369,10 +369,12 @@ class MediaDownloaderService:
             'no_warnings': True,
             'ffmpeg_location': ffmpeg_location,
             'noplaylist': True,
-            'concurrent_fragment_downloads': 8,
+            'concurrent_fragment_downloads': 16,
+            'buffersize': 1048576,
+            'http_chunk_size': 10485760,
             'socket_timeout': 30,
-            'retries': 3,
-            'fragment_retries': 3,
+            'retries': 5,
+            'fragment_retries': 5,
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
             }
