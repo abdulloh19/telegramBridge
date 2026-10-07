@@ -21,7 +21,5 @@ services:
         sync: false
       - key: WEBAPP_URL
         value: https://mnemonic-webapp.vercel.app
-      - key: EXPECTED_BOT_USERNAME
-        value: languageForZubayr_bot
       - key: PORT
         value: 10000

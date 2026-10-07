@@ -16,9 +16,6 @@ if not os.getenv("BOT_TOKEN") and ENV_EXAMPLE_PATH.exists():
 
 # Asosiy sozlamalar
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-EXPECTED_BOT_USERNAME = os.getenv(
-    "EXPECTED_BOT_USERNAME", "languageForZubayr_bot"
-).strip().lstrip("@")
 
 # Cloudflare Quick Tunnel manzillari vaqtinchalik bo'ladi. Render muhitida eski
 # tunnel qiymati qolib ketsa, Telegram Mini App 503 "Tunnel Unavailable"
