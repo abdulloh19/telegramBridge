@@ -1,6 +1,5 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from services.dialogue_service import TOPIC_METADATA, normalize_topic
-from config import WEBAPP_URL
 
 
 def get_dialogue_topics_keyboard(lang: str = "en") -> InlineKeyboardMarkup:
@@ -27,9 +26,6 @@ def get_dialogue_topics_keyboard(lang: str = "en") -> InlineKeyboardMarkup:
                 text=f"🌐 Til: {'🇬🇧 English' if lang == 'en' else '🇷🇺 Русский'}",
                 callback_data="dlg_toggle_lang"
             )
-        ],
-        [
-            InlineKeyboardButton(text="📱 Super Ilovada O'rganish", web_app=WebAppInfo(url=WEBAPP_URL)),
         ],
         [
             InlineKeyboardButton(text="⬅️ Bosh menyuga qaytish", callback_data="dlg_back_main"),
@@ -87,11 +83,10 @@ def get_dialogue_view_keyboard(
         ))
     buttons.append(pills)
 
-    # 4-qator: Tilni almashtirish & Ilovada ochish
+    # 4-qator: Tilni almashtirish
     lang_btn_text = "🇬🇧 Englishga o'tish" if lang == "ru" else "🇷🇺 Rus tiliga o'tish"
     buttons.append([
-        InlineKeyboardButton(text=f"🌐 {lang_btn_text}", callback_data=f"dlg_lang_switch:{canon}:{scenario_idx}:{current_step}"),
-        InlineKeyboardButton(text="📱 Web Ilova", web_app=WebAppInfo(url=WEBAPP_URL))
+        InlineKeyboardButton(text=f"🌐 {lang_btn_text}", callback_data=f"dlg_lang_switch:{canon}:{scenario_idx}:{current_step}")
     ])
 
     # 5-qator: Mavzular ro'yxatiga qaytish

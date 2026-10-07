@@ -54,23 +54,21 @@ async def cmd_start(message: Message, state: FSMContext, actor=None):
 
 
     welcome_text = (
-        "🚀 <b>Universal Video & MP3 Downloader & Super Ilova Botiga Xush Kelibsiz!</b>\n\n"
+        "🚀 <b>Universal Video & MP3 Downloader Botiga Xush Kelibsiz!</b>\n\n"
         f"{profile_line}\n"
         "✨ <b>Asosiy Imkoniyatlar:</b>\n"
-        "• 🚀 <b>Super Ilova & So'zlar:</b> Rus va Ingliz tili mnemonikasi, 25 ta dars so'zi, audio va o'yinlar (/app, /words)\n"
         "• 📥 <b>Universal Video Yuklash:</b> Telegram (yopiq/ochiq kanallar), YouTube, Instagram Reels, TikTok (suv belgisiz), Pinterest va hk. (/dl)\n"
         "• 🎵 <b>Yuqori Sifatli MP3:</b> Istalgan videodan 320kbps stereo musiqani 1 soniyada ajratish va to'g'ridan-to'g'ri MP3 yuklash (/mp3)\n"
         "• 🧹 <b>Hisobni Tozalash:</b> 'Deleted Account' chatlar, nofaol kanallarni tozalash (/cleaner)\n\n"
         "<i>Quyidagi tugmalardan birini tanlang yoki to'g'ridan-to'g'ri video havolasini yuboring:</i>"
     )
 
-    # Menyu tugmasini yangilash
+    # Eski Web App chat-menu tugmasini ushbu chat uchun ham olib tashlash.
     try:
-        from aiogram.types import MenuButtonWebApp, WebAppInfo
-        from config import WEBAPP_URL
+        from aiogram.types import MenuButtonDefault
         await message.bot.set_chat_menu_button(
             chat_id=user_id,
-            menu_button=MenuButtonWebApp(text="Super ilova", web_app=WebAppInfo(url=WEBAPP_URL))
+            menu_button=MenuButtonDefault()
         )
     except Exception as e:
         logger.warning(f"Set menu button error: {e}")
@@ -85,37 +83,6 @@ async def cmd_start(message: Message, state: FSMContext, actor=None):
         parse_mode="HTML",
         reply_markup=start_main_inline_keyboard()
     )
-
-
-@router.message(Command("app", "words", "sozlar"), StateFilter("*"))
-@router.message(F.text.in_({"🚀 Super Ilova (25 ta so'z)", "🚀 Super ilova", "📚 So'zlar"}), StateFilter("*"))
-async def cmd_super_app(message: Message, state: FSMContext):
-    """Super Ilova va so'zlar hisoblagichi haqida ma'lumot va ochish tugmasi."""
-    await state.clear()
-    from config import WEBAPP_URL
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-
-    text = (
-        "🚀 <b>Mnemonic Super Ilova & So'zlar Tizimi</b>\n\n"
-        "✨ <b>Til darslari va shaxsiy natijalar:</b>\n"
-        "• 🇷🇺 Rus tili va 🇬🇧 Ingliz tili\n"
-        "• O'zlashtirilgan so'zlaringizni ilovadagi lug'at bo'limida ko'ring.\n"
-        "• 🎮 <b>O'yinlar:</b> 3D Flashcards, Juftlikni top, So'z yig'ish, Grammatika saralash\n"
-        "• 🗣️ <b>Jonli Dialoglar:</b> Taksi, Kafe, Supermarket audio replikalari bilan\n\n"
-        "👇 <i>Quyidagi tugma orqali bevosita Telegram ichida oching:</i>"
-    )
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📱 Super Ilovani Ochish (25 ta so'z)", web_app=WebAppInfo(url=WEBAPP_URL))
-        ],
-        [
-            InlineKeyboardButton(text="🌐 Brauzerda ochish", url=WEBAPP_URL)
-        ]
-    ])
-
-    await message.answer(text, parse_mode="HTML", reply_markup=kb)
-
 
 @router.message(Command("help"), StateFilter("*"))
 @router.message(F.text == "ℹ️ Qo'llanma / Yordam", StateFilter("*"))

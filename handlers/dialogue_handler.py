@@ -326,8 +326,7 @@ async def cb_lang_switch(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("dlg_finish:"))
 async def cb_finish_dialogue(callback: CallbackQuery):
     """Dialog muvaffaqiyatli yakunlanganda tabriklash va keyingi vaziyatga o'tish."""
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-    from config import WEBAPP_URL
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     user_id = callback.from_user.id
     parts = callback.data.split(":")
@@ -359,12 +358,6 @@ async def cb_finish_dialogue(callback: CallbackQuery):
             InlineKeyboardButton(
                 text="🔁 1-qadamdan qaytadan o'qish",
                 callback_data=f"dlg_step:{topic}:{scenario_idx}:0"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="📱 Super Ilovada davom etish",
-                web_app=WebAppInfo(url=WEBAPP_URL)
             )
         ],
         [

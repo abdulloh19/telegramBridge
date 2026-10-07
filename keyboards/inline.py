@@ -59,13 +59,7 @@ def confirm_clean_keyboard(action_type: str, count: int) -> InlineKeyboardMarkup
 
 def start_main_inline_keyboard() -> InlineKeyboardMarkup:
     """Bosh menyu uchun inline tugmalar."""
-    from config import WEBAPP_URL
-    from aiogram.types import WebAppInfo
-
     buttons = [
-        [
-            InlineKeyboardButton(text="🚀 Super Ilovani Ochish (25 ta so'z)", web_app=WebAppInfo(url=WEBAPP_URL)),
-        ],
         [
             InlineKeyboardButton(text="🗣️ Jonli Dialoglar (Taksi, Mehmonxona...)", callback_data="dlg_menu"),
         ],
