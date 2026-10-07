@@ -19,6 +19,7 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: WEBAPP_URL
+        value: https://mnemonic-webapp.vercel.app
       - key: PORT
-
         value: 10000

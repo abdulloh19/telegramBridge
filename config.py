@@ -16,7 +16,17 @@ if not os.getenv("BOT_TOKEN") and ENV_EXAMPLE_PATH.exists():
 
 # Asosiy sozlamalar
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://mnemonic-webapp.vercel.app").strip()
+
+# Cloudflare Quick Tunnel manzillari vaqtinchalik bo'ladi. Render muhitida eski
+# tunnel qiymati qolib ketsa, Telegram Mini App 503 "Tunnel Unavailable"
+# qaytaradi. Bunday qiymatni doimiy Vercel manziliga xavfsiz almashtiramiz.
+DEFAULT_WEBAPP_URL = "https://mnemonic-webapp.vercel.app"
+configured_webapp_url = os.getenv("WEBAPP_URL", DEFAULT_WEBAPP_URL).strip()
+WEBAPP_URL = (
+    DEFAULT_WEBAPP_URL
+    if ".trycloudflare.com" in configured_webapp_url.lower()
+    else configured_webapp_url
+)
 
 # Telegram Userbot / Account Cleaner sozlamalari
 TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID", "").strip()
