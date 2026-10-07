@@ -10,9 +10,9 @@ if sys.platform == "win32":
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, MenuButtonDefault
 
-from config import BOT_TOKEN, ADMIN_IDS
+from config import BOT_TOKEN, ADMIN_IDS, EXPECTED_BOT_USERNAME
 from middlewares.auth import AuthMiddleware
 from handlers import start, cleaner, media_downloader, voice_handler, text_keep_handler, dialogue_handler
 from utils.logger import logger
@@ -34,9 +34,6 @@ BANNER = r"""
 
 async def setup_bot_commands(bot: Bot):
     """Telegram ilovasida menyu buyruqlarini ro'yxatdan o'tkazish."""
-    from aiogram.types import MenuButtonWebApp, WebAppInfo
-    from config import WEBAPP_URL
-
     commands = [
         BotCommand(command="start", description="🚀 Bosh menyuni ochish"),
         BotCommand(command="stats", description="👥 Foydalanuvchilar va oxirgi 24 soat faolligi"),
@@ -52,12 +49,10 @@ async def setup_bot_commands(bot: Bot):
     ]
 
     await bot.set_my_commands(commands)
-    try:
-        await bot.set_chat_menu_button(
-            menu_button=MenuButtonWebApp(text="Super ilova", web_app=WebAppInfo(url=WEBAPP_URL))
-        )
-    except Exception as e:
-        logger.warning(f"Menyu tugmasini sozlash xatosi: {e}")
+    # Oldingi versiyalarda o'rnatilgan persistent Web App chat-menu tugmasini
+    # tozalaymiz. Tilsevar faqat imzolangan initData beradigan inline web_app
+    # tugmalaridan ochiladi.
+    await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
 
 
 async def notify_users_on_startup(bot: Bot):
@@ -126,6 +121,18 @@ async def main():
     bot = Bot(token=BOT_TOKEN, session=session)
     dp = Dispatcher(storage=MemoryStorage())
 
+    # Token aynan shu loyiha uchun belgilangan botga tegishli ekanini xabar
+    # yuborish yoki fon vazifalarini boshlashdan oldin tekshiramiz.
+    bot_info = await bot.get_me()
+    actual_username = (bot_info.username or "").lower()
+    expected_username = EXPECTED_BOT_USERNAME.lower()
+    if actual_username != expected_username:
+        await bot.session.close()
+        raise RuntimeError(
+            "BOT_TOKEN kutilgan Telegram botiga tegishli emas. "
+            f"Kutilgan username: @{EXPECTED_BOT_USERNAME}"
+        )
+
     # Xavfsizlik Middleware
     auth_middleware = AuthMiddleware()
     dp.message.middleware(auth_middleware)
@@ -143,7 +150,6 @@ async def main():
     await setup_bot_commands(bot)
     await notify_users_on_startup(bot)
 
-    bot_info = await bot.get_me()
     logger.info(f"Bot muvaffaqiyatli ishga tushdi: @{bot_info.username} ({bot_info.first_name})")
     logger.info(f"Ruxsat berilgan Admin ID lar: {list(ADMIN_IDS)}")
     logger.info("Bot Telegram xabarlarini tinglamoqda...")
